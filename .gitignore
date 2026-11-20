@@ -1,0 +1,25 @@
+# Variables de entorno y credenciales
+.env
+.env.local
+.env.*.local
+*.json.key
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+build/
+npm-debug.log*
+
+# Sistema operativo y editor
+.DS_Store
+Thumbs.db
