@@ -1,16 +1,16 @@
-# Variables de entorno y credenciales
+# Variables de entorno y credenciales (NUNCA subir)
 .env
 .env.local
 .env.*.local
 *.json.key
+agrolens-ai-gee-*.json
+*service-account*.json
 
-# Python
-venv/
+# Python y entornos virtuales
 .venv/
+venv/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 .pytest_cache/
 
 # Next.js / Node
@@ -20,6 +20,6 @@ out/
 build/
 npm-debug.log*
 
-# Sistema operativo y editor
+# Sistema operativo
 .DS_Store
 Thumbs.db
