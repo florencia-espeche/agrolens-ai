@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -11,6 +12,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceLine,
 } from "recharts";
 import { Activity, CloudRain } from "lucide-react";
 
@@ -48,11 +50,44 @@ interface GraficosLoteProps {
 
 function formatearFechaCorta(fechaIso: string) {
   if (!fechaIso) return "";
-  const [, mes, dia] = fechaIso.split("-");
-  return `${dia}/${mes}`;
+  const partes = fechaIso.split("-");
+  if (partes.length >= 3) {
+    return `${partes[2].slice(0, 2)}/${partes[1]}`;
+  }
+  return fechaIso;
 }
 
 export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
+  const [diasVentana, setDiasVentana] = useState<30 | 60 | 90>(60);
+
+  // Filtrado temporal en memoria para la serie satelital
+  const sateliteFiltrado = useMemo(() => {
+    if (!series?.satelite || series.satelite.length === 0) return [];
+    const fechaLimite = new Date();
+    fechaLimite.setDate(fechaLimite.getDate() - diasVentana);
+    return series.satelite.filter((d) => new Date(d.fecha_imagen) >= fechaLimite);
+  }, [series?.satelite, diasVentana]);
+
+  // Filtrado temporal en memoria para la serie climática
+  const climaFiltrado = useMemo(() => {
+    if (!series?.clima || series.clima.length === 0) return [];
+    const fechaLimite = new Date();
+    fechaLimite.setDate(fechaLimite.getDate() - diasVentana);
+    return series.clima.filter((d) => new Date(d.fecha) >= fechaLimite);
+  }, [series?.clima, diasVentana]);
+
+  // Cálculo del promedio histórico de NDVI para la línea de referencia
+  const promedioNdvi = useMemo(() => {
+    const valores = sateliteFiltrado
+      .map((d) => Number(d.ndvi_mediana))
+      .filter((v) => !isNaN(v) && v > 0);
+
+    if (valores.length === 0) return null;
+
+    const suma = valores.reduce((acc, val) => acc + val, 0);
+    return Number((suma / valores.length).toFixed(2));
+  }, [sateliteFiltrado]);
+
   if (cargando) {
     return (
       <section className="mt-6 bg-slate-900 border border-slate-800 rounded-xl p-6 text-sm text-slate-400">
@@ -71,33 +106,65 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
 
   return (
     <section className="mt-6 space-y-4">
-      <div className="flex items-center justify-between">
+      {/* Encabezado con selector de 30 / 60 / 90 días */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
         <div>
-          <h2 className="text-lg font-semibold text-slate-100">
-            Series Temporales — {series.lote.nombre_lote}
+          <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
+            <span>Series Temporales — {series.lote.nombre_lote}</span>
           </h2>
-          <p className="text-xs text-slate-400">
-            Cultivo: {series.lote.cultivo_actual} · Últimos 60 días
+          <p className="text-xs text-slate-400 flex items-center gap-2 flex-wrap">
+            <span>Cultivo: {series.lote.cultivo_actual}</span>
+            <span>·</span>
+            <span>Ventana de {diasVentana} días</span>
+            {promedioNdvi !== null && (
+              <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300 border border-amber-500/20">
+                Promedio NDVI: {promedioNdvi}
+              </span>
+            )}
           </p>
+        </div>
+
+        {/* Botones del selector (30 / 60 / 90 días) */}
+        <div className="inline-flex self-start sm:self-auto rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs">
+          {([30, 60, 90] as const).map((dias) => (
+            <button
+              key={dias}
+              onClick={() => setDiasVentana(dias)}
+              className={`rounded-md px-3 py-1 font-medium transition ${
+                diasVentana === dias
+                  ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {dias}d
+            </button>
+          ))}
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Gráfico 1: Índices Satelitales (Sentinel-2) */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
-            <Activity className="w-4 h-4 text-emerald-400" />
-            Vigor Vegetativo (NDVI) y Humedad (NDWI)
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <Activity className="w-4 h-4 text-emerald-400" />
+              Vigor Vegetativo (NDVI) y Humedad (NDWI)
+            </h3>
+            {promedioNdvi !== null && (
+              <span className="text-[11px] text-amber-400 font-mono">
+                Ref. Promedio: {promedioNdvi}
+              </span>
+            )}
+          </div>
 
-          {series.satelite.length === 0 ? (
+          {sateliteFiltrado.length === 0 ? (
             <p className="text-xs text-slate-400 py-16 text-center">
-              Sin pasadas despejadas de Sentinel-2 en este período.
+              Sin pasadas despejadas de Sentinel-2 en la ventana de {diasVentana} días.
             </p>
           ) : (
             <div className="h-[280px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={series.satelite}>
+                <LineChart data={sateliteFiltrado} syncId="agroCharts">
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis
                     dataKey="fecha_imagen"
@@ -114,6 +181,23 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
                     }}
                   />
                   <Legend wrapperStyle={{ fontSize: "12px" }} />
+
+                  {/* Línea de referencia histórica de NDVI */}
+                  {promedioNdvi !== null && (
+                    <ReferenceLine
+                      y={promedioNdvi}
+                      stroke="#f59e0b"
+                      strokeDasharray="5 5"
+                      strokeWidth={1.5}
+                      label={{
+                        value: `Prom: ${promedioNdvi}`,
+                        position: "insideTopRight",
+                        fill: "#f59e0b",
+                        fontSize: 11,
+                      }}
+                    />
+                  )}
+
                   <Line
                     type="monotone"
                     dataKey="ndvi_mediana"
@@ -161,14 +245,14 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
             Precipitaciones (mm) y Temperaturas (°C)
           </h3>
 
-          {series.clima.length === 0 ? (
+          {climaFiltrado.length === 0 ? (
             <p className="text-xs text-slate-400 py-16 text-center">
-              Sin registros climáticos en este período.
+              Sin registros climáticos en la ventana de {diasVentana} días.
             </p>
           ) : (
             <div className="h-[280px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={series.clima}>
+                <ComposedChart data={climaFiltrado} syncId="agroCharts">
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis
                     dataKey="fecha"

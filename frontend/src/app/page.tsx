@@ -29,16 +29,53 @@ interface Alerta {
   estado: string;
 }
 
+interface DiagnosticoEstructurado {
+  quePaso?: string;
+  causaProbable?: string;
+  accionSugerida?: string;
+  textoPlano?: string;
+}
+
+const parseDiagnostico = (texto: string): DiagnosticoEstructurado => {
+  if (!texto) return { textoPlano: "" };
+
+  const quePaso = texto.match(/QUE_PASO:\s*(.+)/i)?.[1]?.trim();
+  const causaProbable = texto.match(/CAUSA_PROBABLE:\s*(.+)/i)?.[1]?.trim();
+  const accionSugerida = texto.match(/ACCION_SUGERIDA:\s*(.+)/i)?.[1]?.trim();
+
+  if (quePaso || causaProbable || accionSugerida) {
+    return { quePaso, causaProbable, accionSugerida };
+  }
+  return { textoPlano: texto };
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function Home() {
   const [geojson, setGeojson] = useState<FeatureCollection | null>(null);
   const [alertas, setAlertas] = useState<Alerta[]>([]);
+  const [filtroEstado, setFiltroEstado] = useState<string>("todas");
   const [loteSeleccionado, setLoteSeleccionado] = useState<number | null>(null);
   const [cargando, setCargando] = useState(true);
   const [isSlowLoad, setIsSlowLoad] = useState(false);
   const [seriesLote, setSeriesLote] = useState<SeriesLote | null>(null);
   const [cargandoSeries, setCargandoSeries] = useState(false);
+
+  const normalizarEstado = (estado?: string) => (estado || "pendiente").toLowerCase().trim();
+
+  const alertasFiltradas = useMemo(() => {
+    if (filtroEstado === "todas") return alertas;
+    return alertas.filter((a) => normalizarEstado(a.estado) === filtroEstado);
+  }, [alertas, filtroEstado]);
+
+  const contadores = useMemo(() => {
+    return {
+      todas: alertas.length,
+      pendiente: alertas.filter((a) => normalizarEstado(a.estado) === "pendiente").length,
+      en_revision: alertas.filter((a) => normalizarEstado(a.estado) === "en_revision").length,
+      resuelta: alertas.filter((a) => normalizarEstado(a.estado) === "resuelta").length,
+    };
+  }, [alertas]);
 
   useEffect(() => {
     if (!cargando) {
@@ -103,7 +140,7 @@ export default function Home() {
     const cargarSeries = async () => {
       setCargandoSeries(true);
       try {
-        const res = await fetch(`${API_URL}/api/lotes/${loteSeleccionado}/series?dias=60`);
+        const res = await fetch(`${API_URL}/api/lotes/${loteSeleccionado}/series?dias=90`);
         const data = await res.json();
         setSeriesLote(data);
       } catch (err) {
@@ -247,78 +284,144 @@ export default function Home() {
 
             {/* Feed de Alertas IA (1 columna) */}
             <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 h-[600px] flex flex-col">
-              <h2 className="font-semibold flex items-center gap-2 mb-3">
-                <AlertTriangle className="w-4 h-4 text-amber-400" />
-                Alertas Agronómicas IA ({alertas.length})
-              </h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400" />
+                  Alertas Agronómicas IA
+                </h2>
+                <span className="text-xs text-slate-400">
+                  {alertasFiltradas.length} de {alertas.length}
+                </span>
+              </div>
 
-              <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                {alertas.length === 0 ? (
-                  <p className="text-sm text-slate-400">No hay alertas registradas.</p>
-                ) : (
-                  alertas.map((alerta) => (
-                    <div
-                      key={alerta.id}
-                      onClick={() => setLoteSeleccionado(alerta.lote_id)}
-                      className={`p-3 rounded-lg border cursor-pointer transition ${
-                        loteSeleccionado === alerta.lote_id
-                          ? "bg-slate-800 border-emerald-500/60"
-                          : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
+              {/* Barra de chips de filtro de estado */}
+              <div className="mb-3 flex flex-wrap gap-1.5 border-b border-slate-800 pb-3">
+                {[
+                  { id: "todas", label: "Todas", count: contadores.todas },
+                  { id: "pendiente", label: "Pendientes", count: contadores.pendiente },
+                  { id: "en_revision", label: "En revisión", count: contadores.en_revision },
+                  { id: "resuelta", label: "Resueltas", count: contadores.resuelta },
+                ].map((tab) => {
+                  const activo = filtroEstado === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setFiltroEstado(tab.id)}
+                      className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                        activo
+                          ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+                          : "bg-slate-800 text-slate-300 hover:bg-slate-700"
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="font-medium text-sm truncate">
-                          {alerta.nombre_lote}
-                        </span>
-                        <span
-                          className={`text-[11px] px-2 py-0.5 rounded-full border font-medium ${badgeSeveridad(
-                            alerta.nivel_severidad
-                          )}`}
-                        >
-                          {alerta.nivel_severidad}
-                        </span>
-                      </div>
+                      <span>{tab.label}</span>
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                          activo ? "bg-slate-950/20 text-slate-950 font-bold" : "bg-slate-900 text-slate-400"
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
 
-                      <p className="text-xs text-emerald-400 mb-2">
-                        {alerta.cultivo_actual} · {alerta.tipo_anomalia}
-                      </p>
+              <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                {alertasFiltradas.length === 0 ? (
+                  <p className="text-center py-12 text-sm text-slate-400">
+                    No hay alertas en esta categoría.
+                  </p>
+                ) : (
+                  alertasFiltradas.map((alerta) => {
+                    const diag = parseDiagnostico(
+                      alerta.diagnostico_llm || (alerta as any).mensaje || (alerta as any).diagnostico
+                    );
+                    return (
+                      <div
+                        key={alerta.id}
+                        onClick={() => setLoteSeleccionado(alerta.lote_id)}
+                        className={`p-3 rounded-lg border cursor-pointer transition ${
+                          loteSeleccionado === alerta.lote_id
+                            ? "bg-slate-800 border-emerald-500/60"
+                            : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <span className="font-medium text-sm truncate">
+                            {alerta.nombre_lote}
+                          </span>
+                          <span
+                            className={`text-[11px] px-2 py-0.5 rounded-full border font-medium ${badgeSeveridad(
+                              alerta.nivel_severidad
+                            )}`}
+                          >
+                            {alerta.nivel_severidad}
+                          </span>
+                        </div>
 
-                      <p className="text-xs text-slate-300 leading-relaxed mb-3">
-                        {alerta.diagnostico_llm}
-                      </p>
+                        <p className="text-xs text-emerald-400 mb-2">
+                          {alerta.cultivo_actual} · {alerta.tipo_anomalia}
+                        </p>
 
-                      <div className="flex items-center justify-between border-t border-slate-800 pt-2">
-                        <span className="text-[11px] text-slate-500">
-                          Estado: <strong className="text-slate-300">{alerta.estado}</strong>
-                        </span>
-                        {alerta.estado !== "RESUELTA" && (
-                          <div className="flex items-center gap-2">
-                            {alerta.estado === "PENDIENTE" && (
+                        {/* Diagnóstico Estructurado o Fallback Legacy */}
+                        {diag.textoPlano ? (
+                          <p className="text-sm text-slate-300 mb-3">{diag.textoPlano}</p>
+                        ) : (
+                          <div className="mt-2 mb-3 space-y-2 text-xs leading-relaxed">
+                            {diag.quePaso && (
+                              <div className="rounded-md bg-slate-800/70 p-2">
+                                <span className="font-semibold text-red-400">Qué pasó: </span>
+                                <span className="text-slate-200">{diag.quePaso}</span>
+                              </div>
+                            )}
+                            {diag.causaProbable && (
+                              <div className="rounded-md bg-slate-800/70 p-2">
+                                <span className="font-semibold text-amber-400">Causa probable: </span>
+                                <span className="text-slate-200">{diag.causaProbable}</span>
+                              </div>
+                            )}
+                            {diag.accionSugerida && (
+                              <div className="rounded-md border border-emerald-500/20 bg-emerald-500/10 p-2">
+                                <span className="font-semibold text-emerald-400">Acción sugerida: </span>
+                                <span className="text-slate-100">{diag.accionSugerida}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between border-t border-slate-800 pt-2">
+                          <span className="text-[11px] text-slate-500">
+                            Estado: <strong className="text-slate-300">{alerta.estado}</strong>
+                          </span>
+                          {alerta.estado !== "RESUELTA" && (
+                            <div className="flex items-center gap-2">
+                              {alerta.estado === "PENDIENTE" && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    actualizarEstadoAlerta(alerta.id, "EN_REVISION");
+                                  }}
+                                  className="text-xs text-amber-400 hover:text-amber-300 hover:underline transition"
+                                >
+                                  En revisión
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  actualizarEstadoAlerta(alerta.id, "EN_REVISION");
+                                  actualizarEstadoAlerta(alerta.id, "RESUELTA");
                                 }}
-                                className="text-xs text-amber-400 hover:text-amber-300 hover:underline transition"
+                                className="text-xs flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition"
                               >
-                                En revisión
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                Marcar resuelta
                               </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                actualizarEstadoAlerta(alerta.id, "RESUELTA");
-                              }}
-                              className="text-xs flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              Marcar resuelta
-                            </button>
-                          </div>
-                        )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </section>

@@ -105,7 +105,7 @@ def obtener_lotes_geojson():
         conn.close()
 
 @app.get("/api/lotes/{lote_id}/series")
-def obtener_series_lote(lote_id: int, dias: int = Query(60, ge=7, le=365)):
+def obtener_series_lote(lote_id: int, dias: int = Query(90, ge=7, le=365)):
     """Devuelve las series temporales de clima (NASA POWER) e índices (Sentinel-2) de un lote."""
     conn = get_db_connection()
     cur = conn.cursor()

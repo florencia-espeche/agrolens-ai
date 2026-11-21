@@ -97,23 +97,23 @@ def analizar_anomalia(df_sat: pd.DataFrame, df_clima: pd.DataFrame) -> dict | No
 
 def generar_diagnostico_llm(lote_info: dict, anomalia: dict) -> str:
     """Usa Gemini con reintento automático y fallback determinístico ante errores 503."""
+    m = anomalia["metricas_contexto"]
     prompt = f"""
-    Eres un Ingeniero Agrónomo Senior especialista en agricultura de precisión en Argentina.
-    Analiza la siguiente alerta detectada automáticamente y redacta un diagnóstico técnico breve
-    (máximo 3 oraciones) dirigido al equipo de campo, indicando la causa más probable y la acción
-    inmediata sugerida (ej. recorrida a campo, monitoreo de plagas, evaluación de riego o aplicación).
+Eres un ingeniero agrónomo analizando una anomalía detectada por satélite (Sentinel-2) y datos climáticos (NASA POWER).
 
-    Datos del lote:
-    - Lote: {lote_info['nombre_lote']} ({lote_info['hectareas']} ha)
-    - Zona: {lote_info['zona_productiva']}
-    - Cultivo: {lote_info['cultivo_actual']} (Campaña {lote_info['campana']})
+Datos del lote {lote_info['nombre_lote']} ({lote_info['cultivo_actual']}, {lote_info['zona_productiva']}):
+- Tipo de anomalía: {anomalia['tipo_anomalia']} (Severidad: {anomalia['nivel_severidad']})
+- NDVI actual: {m['ndvi_actual']:.3f} (variación reciente: {m['variacion_ndvi_pct']}%)
+- NDWI actual (humedad foliar): {m['ndwi_actual']}
+- Precipitación acumulada (14 días): {m['lluvia_acumulada_14d_mm']:.1f} mm
+- Días con temperatura > 35°C: {m['dias_temp_mayor_35c']}
 
-    Alerta detectada:
-    - Tipo: {anomalia['tipo_anomalia']} (Severidad: {anomalia['nivel_severidad']})
-    - Métricas: {json.dumps(anomalia['metricas_contexto'], ensure_ascii=False)}
+Redacta un diagnóstico conciso usando EXACTAMENTE estas 3 etiquetas (una por línea, máximo 25 palabras por sección, sin introducción ni saludos):
 
-    Responde solo con el diagnóstico en español, sin saludos ni formato markdown.
-    """
+QUE_PASO: [Dato concreto de la anomalía en el vigor vegetal]
+CAUSA_PROBABLE: [Cruce con las variables climáticas o hipótesis agronómica]
+ACCION_SUGERIDA: [Paso práctico y específico para revisar a campo]
+"""
 
     for intento in range(2):
         try:
@@ -127,12 +127,11 @@ def generar_diagnostico_llm(lote_info: dict, anomalia: dict) -> str:
             print(f"Aviso: Gemini no disponible (intento {intento + 1}/2): {e}")
             time.sleep(3)
 
-    # Fallback determinístico si la API sigue saturada
-    m = anomalia["metricas_contexto"]
+    # Fallback determinístico estructurado si la API está temporalmente saturada
     return (
-        f"Se detectó {anomalia['tipo_anomalia'].lower()} en {lote_info['cultivo_actual']} "
-        f"(NDVI actual: {m['ndvi_actual']}, variación: {m['variacion_ndvi_pct']}%, "
-        f"lluvia 14d: {m['lluvia_acumulada_14d_mm']} mm). Se recomienda priorizar recorrida a campo."
+        f"QUE_PASO: Caída en vigor vegetal con NDVI en {m['ndvi_actual']} (variación de {m['variacion_ndvi_pct']}%) detectado por Sentinel-2.\n"
+        f"CAUSA_PROBABLE: Condiciones hidro-térmicas con {m['lluvia_acumulada_14d_mm']} mm de lluvia en 14d y {m['dias_temp_mayor_35c']} días de estrés térmico.\n"
+        f"ACCION_SUGERIDA: Realizar recorrida a campo priorizando sectores con menor índice de vegetación para evaluar sanidad foliar y perfil de humedad."
     )
 
 def run_ia_pipeline():
