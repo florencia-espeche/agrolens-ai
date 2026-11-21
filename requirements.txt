@@ -1,0 +1,7 @@
+requests
+psycopg2-binary
+earthengine-api
+python-dotenv
+pandas
+scikit-learn
+google-genai
