@@ -14,7 +14,7 @@ import {
   Legend,
   ReferenceLine,
 } from "recharts";
-import { Activity, CloudRain } from "lucide-react";
+import { Activity, CloudRain, Download } from "lucide-react";
 
 export interface DatoClima {
   fecha: string;
@@ -88,6 +88,104 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
     return Number((suma / valores.length).toFixed(2));
   }, [sateliteFiltrado]);
 
+  // Exportación de la serie combinada a CSV con codificación UTF-8 BOM
+  const totalRegistros = sateliteFiltrado.length + climaFiltrado.length;
+
+  const exportarCSV = () => {
+    const mapaDatos: Record<
+      string,
+      {
+        fecha: string;
+        ndvi: string;
+        ndwi: string;
+        precipitacion_mm: string;
+        temp_max_c: string;
+        temp_min_c: string;
+      }
+    > = {};
+
+    climaFiltrado.forEach((c) => {
+      const f = c.fecha ? c.fecha.split("T")[0] : "";
+      if (!f) return;
+      mapaDatos[f] = {
+        fecha: f,
+        ndvi: "",
+        ndwi: "",
+        precipitacion_mm: c.precipitacion_mm != null ? String(c.precipitacion_mm) : "",
+        temp_max_c: c.temp_max_c != null ? String(c.temp_max_c) : "",
+        temp_min_c: c.temp_min_c != null ? String(c.temp_min_c) : "",
+      };
+    });
+
+    sateliteFiltrado.forEach((s) => {
+      const f = s.fecha_imagen ? s.fecha_imagen.split("T")[0] : "";
+      if (!f) return;
+      if (!mapaDatos[f]) {
+        mapaDatos[f] = {
+          fecha: f,
+          ndvi: "",
+          ndwi: "",
+          precipitacion_mm: "",
+          temp_max_c: "",
+          temp_min_c: "",
+        };
+      }
+      mapaDatos[f].ndvi = s.ndvi_mediana != null ? String(s.ndvi_mediana) : "";
+      mapaDatos[f].ndwi = s.ndwi_mediana != null ? String(s.ndwi_mediana) : "";
+    });
+
+    const fechasOrdenadas = Object.keys(mapaDatos).sort();
+    if (fechasOrdenadas.length === 0) return;
+
+    const headers = [
+      "Fecha",
+      "NDVI_Mediana",
+      "NDWI_Humedad",
+      "Precipitacion_mm",
+      "Temp_Max_C",
+      "Temp_Min_C",
+    ];
+
+    const filas = fechasOrdenadas.map((f) => {
+      const d = mapaDatos[f];
+      return [
+        d.fecha,
+        d.ndvi,
+        d.ndwi,
+        d.precipitacion_mm,
+        d.temp_max_c,
+        d.temp_min_c,
+      ];
+    });
+
+    const contenidoCSV = [
+      headers.join(","),
+      ...filas.map((fila) => fila.join(",")),
+    ].join("\n");
+
+    // \uFEFF asegura compatibilidad con acentos en Excel
+    const blob = new Blob(["\uFEFF" + contenidoCSV], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    const nombreLimpio = (series?.lote?.nombre_lote || "lote")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    link.href = url;
+    link.setAttribute("download", `agrolens_${nombreLimpio}_${diasVentana}d.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   if (cargando) {
     return (
       <section className="mt-6 bg-slate-900 border border-slate-800 rounded-xl p-6 text-sm text-slate-400">
@@ -124,21 +222,33 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
           </p>
         </div>
 
-        {/* Botones del selector (30 / 60 / 90 días) */}
-        <div className="inline-flex self-start sm:self-auto rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs">
-          {([30, 60, 90] as const).map((dias) => (
-            <button
-              key={dias}
-              onClick={() => setDiasVentana(dias)}
-              className={`rounded-md px-3 py-1 font-medium transition ${
-                diasVentana === dias
-                  ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {dias}d
-            </button>
-          ))}
+        {/* Selector de ventana (30 / 60 / 90 días) y botón Exportar CSV */}
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          <div className="inline-flex rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-xs">
+            {([30, 60, 90] as const).map((dias) => (
+              <button
+                key={dias}
+                onClick={() => setDiasVentana(dias)}
+                className={`rounded-md px-2.5 py-1 font-medium transition ${
+                  diasVentana === dias
+                    ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {dias}d
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={exportarCSV}
+            disabled={sateliteFiltrado.length === 0 && climaFiltrado.length === 0}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-emerald-500/50 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Descargar serie temporal en CSV compatible con Excel"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Exportar CSV</span>
+          </button>
         </div>
       </div>
 
