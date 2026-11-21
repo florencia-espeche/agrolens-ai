@@ -7,18 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_origin_regex=r"https://.*\.vercel\.app",  # Permite tu app y previews de Vercel
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 load_dotenv()
 
 app = FastAPI(
@@ -27,10 +15,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Habilitar CORS para que el frontend en Next.js (puerto 3000) pueda consumir la API
+# Habilitar CORS para que el frontend en Next.js (local y Vercel) pueda consumir la API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",  # Permite tu app y previews de Vercel
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
