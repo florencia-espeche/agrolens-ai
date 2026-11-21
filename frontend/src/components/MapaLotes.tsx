@@ -68,6 +68,7 @@ export default function MapaLotes({
       <MapContainer
         center={[-32.2, -63.6]} // Centro de la provincia de Córdoba
         zoom={7}
+        scrollWheelZoom={false}
         className="h-full w-full rounded-xl z-0"
       >
         {/* Capa base satelital de Esri */}
@@ -122,16 +123,16 @@ export default function MapaLotes({
         )}
       </MapContainer>
 
-      {/* Leyenda compacta flotando en la esquina inferior izquierda */}
-      <div className="pointer-events-none absolute bottom-3 left-3 z-[400] flex items-center gap-4 rounded-lg border border-slate-700 bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 backdrop-blur shadow-lg">
-        <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> Alerta activa
+      {/* Leyenda compacta que no tapa el mapa en mobile */}
+      <div className="pointer-events-none absolute bottom-2 left-2 z-[400] flex flex-wrap items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/90 px-2.5 py-1 text-[10px] text-slate-200 backdrop-blur sm:bottom-3 sm:left-3 sm:gap-4 sm:px-3 sm:py-1.5 sm:text-xs">
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-red-500" /> Alerta
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-amber-400" /> En revisión
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-amber-400" /> Revisión
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Estable
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" /> Estable
         </span>
       </div>
     </div>

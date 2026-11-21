@@ -168,22 +168,22 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-6">
-      {/* Header */}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 border-b border-slate-800 pb-4">
-        <div className="flex items-center gap-3">
-          <Sprout className="w-8 h-8 text-emerald-400 shrink-0" />
+    <main className="min-h-screen bg-slate-950 text-slate-100 p-3 sm:p-6 mx-auto max-w-7xl space-y-4">
+      {/* Header responsive */}
+      <header className="flex flex-col gap-2 border-b border-slate-800 pb-3 sm:flex-row sm:items-center sm:justify-between sm:pb-4">
+        <div className="flex items-center gap-2.5 sm:gap-3">
+          <Sprout className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-400 shrink-0" />
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">AgroLens AI</h1>
-            <p className="text-sm text-slate-400">
+            <h1 className="text-lg font-bold text-slate-100 sm:text-xl">AgroLens AI</h1>
+            <p className="text-xs text-slate-400 sm:text-sm">
               Monitoreo Satelital (Sentinel-2 + NASA POWER) &amp; Diagnóstico Agronómico
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Badge de Frescura de Datos Dinámico */}
-          <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 shadow-sm">
+          <div className="w-fit flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300 shadow-sm sm:text-xs">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
@@ -191,7 +191,7 @@ export default function Home() {
             <span>Datos Sentinel-2 / NASA · {ultimaFecha}</span>
           </div>
 
-          <div className="text-sm text-slate-400 hidden md:block border-l border-slate-800 pl-3">
+          <div className="text-xs sm:text-sm text-slate-400 hidden md:block border-l border-slate-800 pl-3">
             {geojson ? `${geojson.features.length} lotes monitoreados` : "Conectando..."}
           </div>
         </div>
@@ -199,7 +199,7 @@ export default function Home() {
 
       {/* Aviso de servidor en Render despertando (Cold Start > 4s) */}
       {isSlowLoad && cargando && (
-        <div className="mb-6 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        <div className="flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
           <span className="relative flex h-2.5 w-2.5 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500"></span>
@@ -211,28 +211,28 @@ export default function Home() {
       )}
 
       {cargando ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             {/* Skeleton del Mapa */}
-            <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4 h-[600px] flex flex-col justify-between">
+            <div className="relative h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[480px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col justify-between">
               <div className="flex items-center justify-between">
-                <div className="h-5 w-44 bg-slate-800/80 rounded animate-pulse"></div>
+                <div className="h-5 w-40 sm:w-44 bg-slate-800/80 rounded animate-pulse"></div>
                 <div className="flex gap-2">
-                  <div className="h-4 w-12 bg-slate-800/80 rounded animate-pulse"></div>
-                  <div className="h-4 w-12 bg-slate-800/80 rounded animate-pulse"></div>
-                  <div className="h-4 w-12 bg-slate-800/80 rounded animate-pulse"></div>
+                  <div className="h-4 w-10 sm:w-12 bg-slate-800/80 rounded animate-pulse"></div>
+                  <div className="h-4 w-10 sm:w-12 bg-slate-800/80 rounded animate-pulse"></div>
+                  <div className="h-4 w-10 sm:w-12 bg-slate-800/80 rounded animate-pulse"></div>
                 </div>
               </div>
-              <div className="flex-1 my-4 bg-slate-800/40 rounded-lg flex flex-col items-center justify-center gap-2 text-slate-500 text-sm animate-pulse">
-                <MapPin className="w-8 h-8 text-slate-700 animate-bounce" />
+              <div className="flex-1 my-3 bg-slate-800/40 rounded-lg flex flex-col items-center justify-center gap-2 text-slate-500 text-xs sm:text-sm animate-pulse">
+                <MapPin className="w-7 h-7 sm:w-8 sm:h-8 text-slate-700 animate-bounce" />
                 <span>Cargando capas geoespaciales y polígonos...</span>
               </div>
-              <div className="h-4 w-36 bg-slate-800/80 rounded animate-pulse"></div>
+              <div className="h-4 w-32 sm:w-36 bg-slate-800/80 rounded animate-pulse"></div>
             </div>
 
             {/* Skeleton del Panel de Alertas */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 h-[600px] flex flex-col space-y-4">
-              <div className="h-5 w-48 bg-slate-800/80 rounded animate-pulse"></div>
+            <div className="flex h-[420px] lg:h-[480px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4 space-y-3">
+              <div className="h-5 w-44 bg-slate-800/80 rounded animate-pulse"></div>
               <div className="space-y-3 flex-1 overflow-hidden">
                 {[1, 2, 3].map((i) => (
                   <div
@@ -240,12 +240,12 @@ export default function Home() {
                     className="p-3 rounded-lg border border-slate-800 bg-slate-950/60 space-y-2.5 animate-pulse"
                   >
                     <div className="flex justify-between items-center">
-                      <div className="h-4 w-32 bg-slate-800/80 rounded"></div>
-                      <div className="h-4 w-14 bg-slate-800/80 rounded-full"></div>
+                      <div className="h-4 w-28 bg-slate-800/80 rounded"></div>
+                      <div className="h-4 w-12 bg-slate-800/80 rounded-full"></div>
                     </div>
-                    <div className="h-3 w-40 bg-slate-800/60 rounded"></div>
-                    <div className="h-8 w-full bg-slate-800/40 rounded"></div>
-                    <div className="h-3 w-28 bg-slate-800/60 rounded"></div>
+                    <div className="h-3 w-36 bg-slate-800/60 rounded"></div>
+                    <div className="h-6 w-full bg-slate-800/40 rounded"></div>
+                    <div className="h-3 w-24 bg-slate-800/60 rounded"></div>
                   </div>
                 ))}
               </div>
@@ -253,18 +253,18 @@ export default function Home() {
           </div>
 
           {/* Skeleton de Gráficos */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 h-[200px] animate-pulse flex items-center justify-center text-slate-500 text-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 sm:p-6 h-[200px] animate-pulse flex items-center justify-center text-slate-500 text-xs sm:text-sm text-center">
             Cargando series temporales satelitales (Sentinel-2) y agroclimáticas (NASA POWER)...
           </div>
         </div>
       ) : (
         <>
           {/* Grid Principal: Mapa + Panel de Alertas */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Mapa (2 columnas) */}
-            <section className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4 h-[600px] flex flex-col">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="font-semibold flex items-center gap-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            {/* Mapa (2 columnas) con altura progresiva */}
+            <section className="relative h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[480px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col">
+              <div className="flex items-center justify-between mb-2 shrink-0">
+                <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-emerald-400" />
                   Mapa de Lotes — Córdoba
                 </h2>
@@ -272,7 +272,7 @@ export default function Home() {
                   {geojson?.features ? `${geojson.features.length} parcelas georreferenciadas` : ""}
                 </span>
               </div>
-              <div className="flex-1 min-h-0">
+              <div className="flex-1 min-h-0 relative rounded-lg overflow-hidden">
                 <MapaLotes
                   geojson={geojson}
                   alertas={alertas}
@@ -283,9 +283,9 @@ export default function Home() {
             </section>
 
             {/* Feed de Alertas IA (1 columna) */}
-            <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 h-[600px] flex flex-col">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="font-semibold flex items-center gap-2">
+            <section className="flex max-h-[420px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4 lg:max-h-[480px]">
+              <div className="flex items-center justify-between mb-3 shrink-0">
+                <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
                   Alertas Agronómicas IA
                 </h2>
@@ -294,8 +294,8 @@ export default function Home() {
                 </span>
               </div>
 
-              {/* Barra de chips de filtro de estado */}
-              <div className="mb-3 flex flex-wrap gap-1.5 border-b border-slate-800 pb-3">
+              {/* Barra de chips de filtro deslizable horizontalmente en mobile */}
+              <div className="mb-3 flex flex-nowrap gap-1.5 overflow-x-auto pb-1 sm:flex-wrap border-b border-slate-800 shrink-0">
                 {[
                   { id: "todas", label: "Todas", count: contadores.todas },
                   { id: "pendiente", label: "Pendientes", count: contadores.pendiente },
@@ -307,7 +307,7 @@ export default function Home() {
                     <button
                       key={tab.id}
                       onClick={() => setFiltroEstado(tab.id)}
-                      className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                      className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium transition whitespace-nowrap shrink-0 ${
                         activo
                           ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
                           : "bg-slate-800 text-slate-300 hover:bg-slate-700"
@@ -389,19 +389,19 @@ export default function Home() {
                           </div>
                         )}
 
-                        <div className="flex items-center justify-between border-t border-slate-800 pt-2">
+                        <div className="flex items-center justify-between border-t border-slate-800 pt-2.5 mt-2">
                           <span className="text-[11px] text-slate-500">
                             Estado: <strong className="text-slate-300">{alerta.estado}</strong>
                           </span>
                           {alerta.estado !== "RESUELTA" && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 sm:gap-2">
                               {alerta.estado === "PENDIENTE" && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     actualizarEstadoAlerta(alerta.id, "EN_REVISION");
                                   }}
-                                  className="text-xs text-amber-400 hover:text-amber-300 hover:underline transition"
+                                  className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 transition active:scale-95"
                                 >
                                   En revisión
                                 </button>
@@ -411,10 +411,10 @@ export default function Home() {
                                   e.stopPropagation();
                                   actualizarEstadoAlerta(alerta.id, "RESUELTA");
                                 }}
-                                className="text-xs flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition"
+                                className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center gap-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 hover:bg-emerald-500/20 transition active:scale-95"
                               >
                                 <CheckCircle2 className="w-3.5 h-3.5" />
-                                Marcar resuelta
+                                <span>Marcar resuelta</span>
                               </button>
                             </div>
                           )}

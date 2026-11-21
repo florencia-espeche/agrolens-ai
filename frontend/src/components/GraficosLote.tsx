@@ -252,9 +252,9 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Gráfico 1: Índices Satelitales (Sentinel-2) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-sm flex items-center gap-2">
               <Activity className="w-4 h-4 text-emerald-400" />
@@ -272,17 +272,22 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
               Sin pasadas despejadas de Sentinel-2 en la ventana de {diasVentana} días.
             </p>
           ) : (
-            <div className="h-[280px] w-full">
+            <div className="h-[220px] w-full sm:h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={sateliteFiltrado} syncId="agroCharts">
+                <LineChart
+                  data={sateliteFiltrado}
+                  syncId="agroCharts"
+                  margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis
                     dataKey="fecha_imagen"
                     tickFormatter={formatearFechaCorta}
                     stroke="#94a3b8"
                     fontSize={11}
+                    minTickGap={28}
                   />
-                  <YAxis domain={[-0.2, 1]} stroke="#94a3b8" fontSize={11} />
+                  <YAxis domain={[-0.2, 1]} stroke="#94a3b8" fontSize={11} width={40} />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "#0f172a",
@@ -349,7 +354,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
         </div>
 
         {/* Gráfico 2: Clima Diario (NASA POWER) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
           <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
             <CloudRain className="w-4 h-4 text-sky-400" />
             Precipitaciones (mm) y Temperaturas (°C)
@@ -360,15 +365,20 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
               Sin registros climáticos en la ventana de {diasVentana} días.
             </p>
           ) : (
-            <div className="h-[280px] w-full">
+            <div className="h-[220px] w-full sm:h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={climaFiltrado} syncId="agroCharts">
+                <ComposedChart
+                  data={climaFiltrado}
+                  syncId="agroCharts"
+                  margin={{ top: 8, right: 4, left: -16, bottom: 0 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis
                     dataKey="fecha"
                     tickFormatter={formatearFechaCorta}
                     stroke="#94a3b8"
                     fontSize={11}
+                    minTickGap={28}
                   />
                   {/* Eje Y izquierdo: Temperaturas */}
                   <YAxis
@@ -376,6 +386,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
                     stroke="#94a3b8"
                     fontSize={11}
                     unit="°C"
+                    width={38}
                   />
                   {/* Eje Y derecho: Precipitación */}
                   <YAxis
@@ -384,6 +395,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
                     stroke="#38bdf8"
                     fontSize={11}
                     unit="mm"
+                    width={38}
                   />
                   <Tooltip
                     contentStyle={{
