@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { MapContainer, TileLayer, GeoJSON } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import type { FeatureCollection, Feature } from "geojson";
@@ -46,10 +47,10 @@ const getLoteStyle = (
   }
 
   return {
-    color: isSelected ? "#ffffff" : color,
+    color: isSelected ? "#38bdf8" : color,
     fillColor: color,
-    weight: isSelected ? 3 : 2,
-    fillOpacity: isSelected ? 0.55 : 0.35,
+    weight: isSelected ? 4 : 2,
+    fillOpacity: isSelected ? 0.65 : 0.4,
   };
 };
 
@@ -59,23 +60,60 @@ export default function MapaLotes({
   loteSeleccionadoId,
   onSelectLote,
 }: MapaLotesProps) {
+  const [tipoCapa, setTipoCapa] = useState<"satelital" | "oscuro">("satelital");
+
   // Key dinámica para forzar repintado en React-Leaflet al cambiar estado de alertas o selección
   const alertasKey = alertas.map((a) => `${a.id}:${a.estado}`).join(",");
   const mapKey = `${JSON.stringify(geojson)}-${alertasKey}-${loteSeleccionadoId}`;
 
   return (
     <div className="relative h-full w-full">
+      {/* Selector de capa: Satelital vs Modo Oscuro */}
+      <div className="absolute top-2 right-2 z-[400] flex items-center rounded-lg border border-slate-700 bg-slate-900/90 p-0.5 text-[11px] backdrop-blur shadow-md">
+        <button
+          type="button"
+          onClick={() => setTipoCapa("satelital")}
+          className={`px-2.5 py-1 rounded-md font-medium transition ${
+            tipoCapa === "satelital"
+              ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          Satelital
+        </button>
+        <button
+          type="button"
+          onClick={() => setTipoCapa("oscuro")}
+          className={`px-2.5 py-1 rounded-md font-medium transition ${
+            tipoCapa === "oscuro"
+              ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          Modo Oscuro
+        </button>
+      </div>
+
       <MapContainer
         center={[-32.2, -63.6]} // Centro de la provincia de Córdoba
         zoom={7}
         scrollWheelZoom={false}
         className="h-full w-full rounded-xl z-0"
       >
-        {/* Capa base satelital de Esri */}
-        <TileLayer
-          attribution="Tiles &copy; Esri"
-          url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        />
+        {/* Capa de mapa: Satelital (Esri) o Modo Oscuro (CartoDB Dark Matter) */}
+        {tipoCapa === "satelital" ? (
+          <TileLayer
+            key="satelital"
+            attribution="Tiles &copy; Esri"
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          />
+        ) : (
+          <TileLayer
+            key="oscuro"
+            attribution="&copy; OpenStreetMap &copy; CARTO"
+            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          />
+        )}
 
         {geojson && (
           <GeoJSON

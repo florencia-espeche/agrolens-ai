@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #020617;
+  --foreground: #f8fafc;
 }
 
 @theme inline {
@@ -12,15 +12,115 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background-color: #020617 !important;
+  color: #f8fafc !important;
+  font-family: Arial, Helvetica, sans-serif;
+  color-scheme: dark;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* =========================================
+   Estilos Oscuros para Leaflet (evita fondos blancos)
+   ========================================= */
+
+.leaflet-container {
+  background-color: #020617 !important;
+  font-family: inherit !important;
+}
+
+/* Botones de zoom (+ / -) */
+.leaflet-bar a {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-bottom: 1px solid #1e293b !important;
+  transition: all 0.2s ease;
+}
+
+.leaflet-bar a:hover {
+  background-color: #1e293b !important;
+  color: #34d399 !important;
+}
+
+.leaflet-bar a.leaflet-disabled {
+  background-color: #020617 !important;
+  color: #475569 !important;
+}
+
+.leaflet-bar {
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.5) !important;
+}
+
+/* Cuadro de atribución (Leaflet | Tiles © Esri) */
+.leaflet-container .leaflet-control-attribution {
+  background-color: rgba(15, 23, 42, 0.85) !important;
+  color: #94a3b8 !important;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(51, 65, 85, 0.6) !important;
+  border-radius: 6px !important;
+  margin: 0 8px 8px 0 !important;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+}
+
+.leaflet-control-attribution a {
+  color: #38bdf8 !important;
+  text-decoration: none !important;
+}
+
+.leaflet-control-attribution a:hover {
+  text-decoration: underline !important;
+}
+
+/* Tooltips al pasar el mouse por un lote */
+.leaflet-tooltip {
+  background-color: #0f172a !important;
+  border: 1px solid #334155 !important;
+  color: #f1f5f9 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.5) !important;
+  padding: 8px 12px !important;
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+  font-family: inherit !important;
+}
+
+.leaflet-tooltip-top:before {
+  border-top-color: #334155 !important;
+}
+
+.leaflet-tooltip-bottom:before {
+  border-bottom-color: #334155 !important;
+}
+
+.leaflet-tooltip-left:before {
+  border-left-color: #334155 !important;
+}
+
+.leaflet-tooltip-right:before {
+  border-right-color: #334155 !important;
+}
+
+/* Popups si se abren */
+.leaflet-popup-content-wrapper {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.5) !important;
+}
+
+.leaflet-popup-tip {
+  background-color: #0f172a !important;
+}
+
+.leaflet-popup-close-button {
+  color: #94a3b8 !important;
+}
+
+.leaflet-popup-close-button:hover {
+  color: #f8fafc !important;
 }

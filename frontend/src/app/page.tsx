@@ -168,8 +168,9 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-3 sm:p-6 mx-auto max-w-7xl space-y-4">
-      {/* Header responsive */}
+    <div className="min-h-screen w-full bg-slate-950 text-slate-100">
+      <main className="p-3 sm:p-6 mx-auto max-w-7xl space-y-4">
+        {/* Header responsive */}
       <header className="flex flex-col gap-2 border-b border-slate-800 pb-3 sm:flex-row sm:items-center sm:justify-between sm:pb-4">
         <div className="flex items-center gap-2.5 sm:gap-3">
           <Sprout className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-400 shrink-0" />
@@ -429,6 +430,7 @@ export default function Home() {
           <GraficosLote series={seriesLote} cargando={cargandoSeries} />
         </>
       )}
-    </main>
+      </main>
+    </div>
   );
 }
