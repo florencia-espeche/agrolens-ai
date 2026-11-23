@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from typing import List, Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -282,13 +283,12 @@ def chat_lote(req: ChatLoteRequest):
     if not api_key:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY no configurada")
 
-    try:
-        client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
-        # Limita a los últimos 60 registros para mantener el contexto liviano y rápido
-        contexto_json = json.dumps(req.datos[-60:], ensure_ascii=False)
+    # Limita a los últimos 60 registros para mantener el contexto liviano y rápido
+    contexto_json = json.dumps(req.datos[-60:], ensure_ascii=False)
 
-        prompt = f"""
+    prompt = f"""
 Eres el asistente agronómico de AgroLens AI. Responde la pregunta del usuario sobre el lote "{req.lote_nombre}" basándote EXCLUSIVAMENTE en los datos reales provistos abajo.
 
 Reglas:
@@ -303,11 +303,28 @@ Pregunta del usuario:
 {req.pregunta}
 """
 
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-        )
+    # Reintenta hasta 2 veces si Google tiene un pico de demanda (503)
+    ultimo_error = None
+    for intento in range(2):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=prompt,
+            )
+            return {"respuesta": response.text}
+        except Exception as e:
+            ultimo_error = e
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                time.sleep(2)
+                continue
+            break
 
-        return {"respuesta": response.text}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error consultando a Gemini: {str(e)}")
+    if ultimo_error and ("503" in str(ultimo_error) or "UNAVAILABLE" in str(ultimo_error)):
+        raise HTTPException(
+            status_code=503,
+            detail="El modelo de IA tiene alta demanda en este momento. Intenta de nuevo en unos segundos.",
+        )
+    raise HTTPException(
+        status_code=500,
+        detail=f"Error consultando a Gemini: {str(ultimo_error)}",
+    )
