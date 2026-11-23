@@ -1,5 +1,6 @@
 import os
 import json
+from typing import List, Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, Query
@@ -7,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import requests
+from google import genai
 
 load_dotenv()
 
@@ -268,3 +270,44 @@ def suscribir_telegram(data: SuscripcionTelegram):
         "telegram_notificado": telegram_enviado,
         "detalle": detalle_telegram,
     }
+
+class ChatLoteRequest(BaseModel):
+    lote_nombre: str
+    pregunta: str
+    datos: List[Dict[str, Any]]  # Últimos 60 días (fecha, ndvi, lluvia, temp)
+
+@app.post("/api/chat-lote")
+def chat_lote(req: ChatLoteRequest):
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY no configurada")
+
+    try:
+        client = genai.Client(api_key=api_key)
+
+        # Limita a los últimos 60 registros para mantener el contexto liviano y rápido
+        contexto_json = json.dumps(req.datos[-60:], ensure_ascii=False)
+
+        prompt = f"""
+Eres el asistente agronómico de AgroLens AI. Responde la pregunta del usuario sobre el lote "{req.lote_nombre}" basándote EXCLUSIVAMENTE en los datos reales provistos abajo.
+
+Reglas:
+- Cita fechas exactas y valores concretos (NDVI, mm de lluvia, °C) cuando correspondan.
+- Sé conciso y claro (máximo 4 o 5 líneas).
+- Si los datos no alcanzan para responder algo, dilo con honestidad sin inventar cifras.
+
+Datos históricos del lote (JSON):
+{contexto_json}
+
+Pregunta del usuario:
+{req.pregunta}
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+
+        return {"respuesta": response.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consultando a Gemini: {str(e)}")
