@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 
@@ -200,3 +201,70 @@ def actualizar_estado_alerta(alerta_id: int, body: EstadoAlertaUpdate):
     finally:
         cur.close()
         conn.close()
+
+class SuscripcionTelegram(BaseModel):
+    chat_id: str
+
+@app.post("/api/suscribir-telegram")
+def suscribir_telegram(data: SuscripcionTelegram):
+    chat_id = data.chat_id.strip()
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="El chat_id de Telegram es obligatorio")
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+    # 1. Guardar en Supabase (crea la tabla si no existe e ignora duplicados)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS suscriptores_telegram (
+                id SERIAL PRIMARY KEY,
+                chat_id TEXT UNIQUE NOT NULL,
+                activo BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        cur.execute(
+            """
+            INSERT INTO suscriptores_telegram (chat_id, activo)
+            VALUES (%s, TRUE)
+            ON CONFLICT (chat_id) DO UPDATE SET activo = TRUE;
+            """,
+            (chat_id,),
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error guardando suscripción: {str(e)}")
+    finally:
+        cur.close()
+        conn.close()
+
+    # 2. Enviar mensaje de confirmación inmediato
+    telegram_enviado = False
+    detalle_telegram = None
+    if token:
+        try:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            res = requests.post(
+                url,
+                json={
+                    "chat_id": chat_id,
+                    "text": "✅ ¡Suscripción activada en AgroLens AI!\nRecibirás aquí las alertas agronómicas críticas de tus lotes.",
+                    "parse_mode": "HTML",
+                },
+                timeout=10,
+            )
+            telegram_enviado = (res.status_code == 200)
+            if not telegram_enviado:
+                detalle_telegram = res.text
+        except Exception as e:
+            detalle_telegram = str(e)
+
+    return {
+        "status": "ok",
+        "message": "Suscripción guardada correctamente",
+        "telegram_notificado": telegram_enviado,
+        "detalle": detalle_telegram,
+    }

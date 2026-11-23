@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import type { FeatureCollection } from "geojson";
-import { AlertTriangle, CheckCircle2, Sprout, MapPin } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Sprout, MapPin, Send } from "lucide-react";
 import GraficosLote, { type SeriesLote } from "@/components/GraficosLote";
 
 // Leaflet requiere `window`, por eso se importa sin SSR
@@ -60,6 +60,11 @@ export default function Home() {
   const [isSlowLoad, setIsSlowLoad] = useState(false);
   const [seriesLote, setSeriesLote] = useState<SeriesLote | null>(null);
   const [cargandoSeries, setCargandoSeries] = useState(false);
+
+  // Estados para la suscripción al Bot de Telegram
+  const [chatId, setChatId] = useState("");
+  const [estadoSub, setEstadoSub] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "AgroLensAIBot";
 
   const normalizarEstado = (estado?: string) => (estado || "pendiente").toLowerCase().trim();
 
@@ -165,6 +170,25 @@ export default function Home() {
     if (sev === "CRITICA") return "bg-red-500/20 text-red-400 border-red-500/40";
     if (sev === "ALTA") return "bg-orange-500/20 text-orange-400 border-orange-500/40";
     return "bg-yellow-500/20 text-yellow-400 border-yellow-500/40";
+  };
+
+  const handleSuscribir = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatId.trim()) return;
+    setEstadoSub("loading");
+
+    try {
+      const res = await fetch(`${API_URL}/api/suscribir-telegram`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId.trim() }),
+      });
+      if (!res.ok) throw new Error();
+      setEstadoSub("ok");
+      setChatId("");
+    } catch {
+      setEstadoSub("error");
+    }
   };
 
   return (
@@ -283,8 +307,9 @@ export default function Home() {
               </div>
             </section>
 
-            {/* Feed de Alertas IA (1 columna) */}
-            <section className="flex max-h-[420px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4 lg:max-h-[480px]">
+            {/* Columna derecha: Feed de Alertas IA + Tarjeta de Suscripción Telegram */}
+            <div className="flex flex-col gap-4">
+              <section className="flex max-h-[420px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4 lg:max-h-[480px]">
               <div className="flex items-center justify-between mb-3 shrink-0">
                 <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
@@ -426,6 +451,71 @@ export default function Home() {
                 )}
               </div>
             </section>
+
+              {/* Formulario de Suscripción a Telegram */}
+              <form
+                onSubmit={handleSuscribir}
+                className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-2.5"
+              >
+                <div className="flex items-center gap-2">
+                  <Send className="w-4 h-4 text-sky-400" />
+                  <h4 className="text-sm font-semibold text-slate-100">
+                    Recibir alertas por Telegram
+                  </h4>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  1. Inicia nuestro bot en{" "}
+                  <a
+                    href={`https://t.me/${botUsername}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-emerald-400 underline font-medium hover:text-emerald-300"
+                  >
+                    @{botUsername}
+                  </a>
+                  . <br />
+                  2. Obtén tu ID en{" "}
+                  <a
+                    href="https://t.me/userinfobot"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-emerald-400 underline font-medium hover:text-emerald-300"
+                  >
+                    @userinfobot
+                  </a>{" "}
+                  y pégalo abajo:
+                </p>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatId}
+                    onChange={(e) => setChatId(e.target.value)}
+                    placeholder="Ej: 123456789"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={estadoSub === "loading"}
+                    className="shrink-0 rounded-lg bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-emerald-400 active:scale-95 disabled:opacity-50"
+                  >
+                    {estadoSub === "loading" ? "Guardando..." : "Activar"}
+                  </button>
+                </div>
+
+                {estadoSub === "ok" && (
+                  <p className="text-xs text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>¡Listo! Revisa tu Telegram para confirmar.</span>
+                  </p>
+                )}
+                {estadoSub === "error" && (
+                  <p className="text-xs text-red-400">
+                    Error al guardar. Verifica tu ID o asegúrate de haber iniciado el bot.
+                  </p>
+                )}
+              </form>
+            </div>
           </div>
           <GraficosLote series={seriesLote} cargando={cargandoSeries} />
         </>

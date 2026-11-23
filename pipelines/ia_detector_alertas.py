@@ -7,6 +7,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 import time
+import requests
 
 load_dotenv()
 
@@ -187,8 +188,70 @@ def run_ia_pipeline():
         conn.commit()
         print(f"[ALERTA {anomalia['nivel_severidad']}] Lote {lote_info['nombre_lote']}: {diagnostico}")
 
+        # Notificar a los suscriptores de Telegram
+        notificar_telegram(lote_info["nombre_lote"], diagnostico, anomalia["nivel_severidad"], conn)
+
     cur.close()
     conn.close()
+
+def notificar_telegram(nombre_lote: str, diagnostico: str, severidad: str, conn):
+    """Envía la alerta detectada a todos los suscriptores activos en Telegram."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        print("[Telegram] TELEGRAM_BOT_TOKEN no configurado, omitiendo notificación.")
+        return
+
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS suscriptores_telegram (
+                id SERIAL PRIMARY KEY,
+                chat_id TEXT UNIQUE NOT NULL,
+                activo BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+        cur.execute("SELECT chat_id FROM suscriptores_telegram WHERE activo = TRUE;")
+        suscriptores = [row[0] for row in cur.fetchall()]
+        cur.close()
+    except Exception as e:
+        print(f"[Telegram] Error consultando suscriptores: {e}")
+        return
+
+    if not suscriptores:
+        print("[Telegram] No hay suscriptores activos registrados.")
+        return
+
+    # Formatear el diagnóstico para Telegram con HTML seguro (evita errores con guiones bajos)
+    diag_formateado = (
+        diagnostico
+        .replace("QUE_PASO:", "🔍 <b>Qué pasó:</b>")
+        .replace("CAUSA_PROBABLE:", "⚠️ <b>Causa probable:</b>")
+        .replace("ACCION_SUGERIDA:", "🌱 <b>Acción sugerida:</b>")
+    )
+
+    icono = "🚨" if severidad == "CRITICA" else "⚠️"
+    mensaje = (
+        f"{icono} <b>Alerta {severidad} — AgroLens AI</b>\n"
+        f"📍 <b>Lote:</b> {nombre_lote}\n\n"
+        f"{diag_formateado}"
+    )
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    for chat_id in suscriptores:
+        try:
+            res = requests.post(
+                url,
+                json={"chat_id": chat_id, "text": mensaje, "parse_mode": "HTML"},
+                timeout=10,
+            )
+            if res.status_code == 200:
+                print(f"[Telegram] Alerta enviada con éxito a chat_id {chat_id}")
+            else:
+                print(f"[Telegram] Fallo enviando a {chat_id}: {res.status_code} - {res.text}")
+        except Exception as e:
+            print(f"[Telegram] Error de red enviando a {chat_id}: {e}")
 
 if __name__ == "__main__":
     run_ia_pipeline()

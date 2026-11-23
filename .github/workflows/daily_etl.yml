@@ -32,8 +32,9 @@ jobs:
           GEE_SERVICE_ACCOUNT_JSON: ${{ secrets.GEE_SERVICE_ACCOUNT_JSON }}
         run: python pipelines/etl_ingesta_agro.py --days 7
 
-      - name: Ejecutar Detector de Alertas IA (Isolation Forest + Gemini)
+      - name: Ejecutar Detector de Alertas IA (Isolation Forest + Gemini + Telegram)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python pipelines/ia_detector_alertas.py
