@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import type { FeatureCollection } from "geojson";
 import { AlertTriangle, CheckCircle2, Sprout, MapPin, Send } from "lucide-react";
 import GraficosLote, { type SeriesLote } from "@/components/GraficosLote";
+import ChatLote from "@/components/ChatLote";
 
 // Leaflet requiere `window`, por eso se importa sin SSR
 const MapaLotes = dynamic(() => import("@/components/MapaLotes"), {
@@ -72,6 +73,45 @@ export default function Home() {
     if (filtroEstado === "todas") return alertas;
     return alertas.filter((a) => normalizarEstado(a.estado) === filtroEstado);
   }, [alertas, filtroEstado]);
+
+  // Combina series satelitales y climáticas para el contexto del Asistente IA
+  const datosCombinadosLote = useMemo(() => {
+    if (!seriesLote) return [];
+    const mapa: Record<string, any> = {};
+
+    (seriesLote.clima || []).forEach((c) => {
+      const f = c.fecha ? c.fecha.split("T")[0] : "";
+      if (!f) return;
+      mapa[f] = {
+        fecha: f,
+        ndvi: null,
+        ndwi: null,
+        precipitacion_mm: c.precipitacion_mm,
+        temp_max_c: c.temp_max_c,
+        temp_min_c: c.temp_min_c,
+      };
+    });
+
+    (seriesLote.satelite || []).forEach((s) => {
+      const f = s.fecha_imagen ? s.fecha_imagen.split("T")[0] : "";
+      if (!f) return;
+      if (!mapa[f]) {
+        mapa[f] = {
+          fecha: f,
+          ndvi: s.ndvi_mediana,
+          ndwi: s.ndwi_mediana,
+          precipitacion_mm: null,
+          temp_max_c: null,
+          temp_min_c: null,
+        };
+      } else {
+        mapa[f].ndvi = s.ndvi_mediana;
+        mapa[f].ndwi = s.ndwi_mediana;
+      }
+    });
+
+    return Object.values(mapa).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [seriesLote]);
 
   const contadores = useMemo(() => {
     return {
@@ -518,6 +558,17 @@ export default function Home() {
             </div>
           </div>
           <GraficosLote series={seriesLote} cargando={cargandoSeries} />
+
+          {/* Asistente IA sobre el lote seleccionado */}
+          {loteSeleccionado && seriesLote && (
+            <div className="mt-6">
+              <ChatLote
+                loteId={loteSeleccionado}
+                loteNombre={seriesLote.lote.nombre_lote}
+                datosLote={datosCombinadosLote}
+              />
+            </div>
+          )}
         </>
       )}
       </main>
