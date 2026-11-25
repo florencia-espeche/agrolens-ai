@@ -100,7 +100,7 @@ export default function MapaLotes({
         scrollWheelZoom={false}
         className="h-full w-full rounded-xl z-0"
       >
-        {/* Capa de mapa: Satelital (Esri) o Modo Oscuro (CartoDB Dark Matter) */}
+        {/* Capa de mapa: Satelital (Esri) o Modo Oscuro (OpenStreetMap con filtro CSS) */}
         {tipoCapa === "satelital" ? (
           <TileLayer
             key="satelital"
@@ -110,8 +110,9 @@ export default function MapaLotes({
         ) : (
           <TileLayer
             key="oscuro"
-            attribution="&copy; OpenStreetMap &copy; CARTO"
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution="&copy; OpenStreetMap contributors"
+            className="map-tiles-dark"
           />
         )}
 

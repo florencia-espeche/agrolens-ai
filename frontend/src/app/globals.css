@@ -18,6 +18,9 @@ body {
   color: #f8fafc !important;
   font-family: Arial, Helvetica, sans-serif;
   color-scheme: dark;
+  max-width: 100%;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
 }
 
 /* =========================================
@@ -123,4 +126,9 @@ body {
 
 .leaflet-popup-close-button:hover {
   color: #f8fafc !important;
+}
+
+/* Filtro de modo oscuro aplicado solo a los tiles del mapa */
+.map-tiles-dark {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
 }

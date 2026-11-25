@@ -254,7 +254,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Gráfico 1: Índices Satelitales (Sentinel-2) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
+        <div className="min-w-0 overflow-hidden bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-sm flex items-center gap-2">
               <Activity className="w-4 h-4 text-emerald-400" />
@@ -272,7 +272,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
               Sin pasadas despejadas de Sentinel-2 en la ventana de {diasVentana} días.
             </p>
           ) : (
-            <div className="h-[220px] w-full sm:h-[260px]">
+            <div className="h-[220px] w-full sm:h-[260px] xl:h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={sateliteFiltrado}
@@ -354,7 +354,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
         </div>
 
         {/* Gráfico 2: Clima Diario (NASA POWER) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
+        <div className="min-w-0 overflow-hidden bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
           <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
             <CloudRain className="w-4 h-4 text-sky-400" />
             Precipitaciones (mm) y Temperaturas (°C)
@@ -365,7 +365,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
               Sin registros climáticos en la ventana de {diasVentana} días.
             </p>
           ) : (
-            <div className="h-[220px] w-full sm:h-[260px]">
+            <div className="h-[220px] w-full sm:h-[260px] xl:h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={climaFiltrado}

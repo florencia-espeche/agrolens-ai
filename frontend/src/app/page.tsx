@@ -232,8 +232,8 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen w-full bg-slate-950 text-slate-100">
-      <main className="p-3 sm:p-6 mx-auto max-w-7xl space-y-4">
+    <div className="min-h-screen w-full overflow-x-hidden bg-slate-950 text-slate-100">
+      <main className="w-full max-w-[1600px] mx-auto p-3 sm:p-6 lg:px-8 space-y-4 sm:space-y-6">
         {/* Header responsive */}
       <header className="flex flex-col gap-2 border-b border-slate-800 pb-3 sm:flex-row sm:items-center sm:justify-between sm:pb-4">
         <div className="flex items-center gap-2.5 sm:gap-3">
@@ -276,10 +276,10 @@ export default function Home() {
       )}
 
       {cargando ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="grid grid-cols-1 gap-4 lg:gap-6 lg:grid-cols-3">
             {/* Skeleton del Mapa */}
-            <div className="relative h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[480px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col justify-between">
+            <div className="relative min-w-0 h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[580px] xl:h-[640px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col justify-between">
               <div className="flex items-center justify-between">
                 <div className="h-5 w-40 sm:w-44 bg-slate-800/80 rounded animate-pulse"></div>
                 <div className="flex gap-2">
@@ -296,7 +296,7 @@ export default function Home() {
             </div>
 
             {/* Skeleton del Panel de Alertas */}
-            <div className="flex h-[420px] lg:h-[480px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4 space-y-3">
+            <div className="min-w-0 flex h-[420px] lg:h-[580px] xl:h-[640px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4 space-y-3">
               <div className="h-5 w-44 bg-slate-800/80 rounded animate-pulse"></div>
               <div className="space-y-3 flex-1 overflow-hidden">
                 {[1, 2, 3].map((i) => (
@@ -325,9 +325,9 @@ export default function Home() {
       ) : (
         <>
           {/* Grid Principal: Mapa + Panel de Alertas */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 lg:gap-6 lg:grid-cols-3">
             {/* Mapa (2 columnas) con altura progresiva */}
-            <section className="relative h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[480px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col">
+            <section className="relative min-w-0 h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[580px] xl:h-[640px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col">
               <div className="flex items-center justify-between mb-2 shrink-0">
                 <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-emerald-400" />
@@ -348,8 +348,8 @@ export default function Home() {
             </section>
 
             {/* Columna derecha: Feed de Alertas IA + Tarjeta de Suscripción Telegram */}
-            <div className="flex flex-col gap-4">
-              <section className="flex max-h-[420px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4 lg:max-h-[480px]">
+            <div className="min-w-0 flex flex-col gap-4 lg:h-[580px] xl:h-[640px]">
+              <section className="flex max-h-[420px] lg:max-h-none lg:flex-1 min-h-0 flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4">
               <div className="flex items-center justify-between mb-3 shrink-0">
                 <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
@@ -495,7 +495,7 @@ export default function Home() {
               {/* Formulario de Suscripción a Telegram */}
               <form
                 onSubmit={handleSuscribir}
-                className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-2.5"
+                className="shrink-0 rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-2.5"
               >
                 <div className="flex items-center gap-2">
                   <Send className="w-4 h-4 text-sky-400" />
