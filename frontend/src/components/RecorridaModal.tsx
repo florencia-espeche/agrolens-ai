@@ -22,6 +22,7 @@ export interface ContextoRecorrida {
   alertaId?: number;
   alertaTipo?: string;
   nuevoEstadoAlerta?: "EN_REVISION" | "RESUELTA";
+  fechaDefault?: string;
 }
 
 interface RecorridaModalProps {
@@ -57,7 +58,7 @@ export default function RecorridaModal({
   onGuardado,
   onSoloCambiarEstado,
 }: RecorridaModalProps) {
-  const [fecha, setFecha] = useState(() => new Date().toISOString().split("T")[0]);
+  const [fecha, setFecha] = useState(() => contexto?.fechaDefault || "");
   const [autor, setAutor] = useState(leerUltimoAutor);
   const [hallazgo, setHallazgo] = useState("");
   const [labor, setLabor] = useState("");

@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import type { Feature, FeatureCollection } from "geojson";
 import {
   Leaf,
@@ -33,6 +32,7 @@ interface ResumenLoteActivoProps {
   cargandoPronostico?: boolean;
   alertasVisibles: AlertaResumen[];
   recorridasDelLote?: RecorridaCampo[];
+  ahoraMs?: number | null;
   onAbrirRecorrida?: (loteId: number, nombreLote: string) => void;
   onEditarLote?: (lote: LoteEditable) => void;
 }
@@ -104,10 +104,10 @@ export default function ResumenLoteActivo({
   cargandoPronostico = false,
   alertasVisibles,
   recorridasDelLote = [],
+  ahoraMs = null,
   onAbrirRecorrida,
   onEditarLote,
 }: ResumenLoteActivoProps) {
-  const [ahoraMs] = useState(() => Date.now());
   const features: Feature[] = geojsonFiltrado?.features || [];
   if (features.length === 0) return null;
 
@@ -190,7 +190,9 @@ export default function ResumenLoteActivo({
       : null;
 
   const diasDesdeSiembra =
-    typeof props.fecha_siembra === "string" && props.fecha_siembra
+    ahoraMs !== null &&
+    typeof props.fecha_siembra === "string" &&
+    props.fecha_siembra
       ? Math.max(
           0,
           Math.floor(

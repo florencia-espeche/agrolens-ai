@@ -74,6 +74,8 @@ class LoteUpdateRequest(BaseModel):
     cultivo_actual: Optional[str] = None
     campana: Optional[str] = None
     fecha_siembra: Optional[str] = None
+    cliente_id: Optional[int] = None
+    nuevo_cliente: Optional[NuevoClientePayload] = None
 
 
 class RecorridaCreateRequest(BaseModel):
@@ -238,6 +240,50 @@ def obtener_lotes_geojson():
         conn.close()
 
 
+def _resolver_o_crear_cliente(
+    cur: Any,
+    cliente_id: Optional[int],
+    nuevo_cliente: Optional[NuevoClientePayload],
+) -> tuple[int, str]:
+    """Valida un cliente existente o registra uno nuevo devolviendo (id, nombre_razon_social)."""
+    if cliente_id is not None:
+        cur.execute(
+            "SELECT id, nombre_razon_social FROM clientes WHERE id = %s;",
+            (cliente_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Establecimiento / dueño no encontrado.")
+        return row["id"], row["nombre_razon_social"]
+
+    if not nuevo_cliente or not nuevo_cliente.nombre_razon_social.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Debe seleccionar un dueño / establecimiento o crear uno nuevo.",
+        )
+
+    razon = nuevo_cliente.nombre_razon_social.strip()
+    email = (
+        nuevo_cliente.email_contacto.strip()
+        if nuevo_cliente.email_contacto and nuevo_cliente.email_contacto.strip()
+        else agro_services.slug_email_establecimiento(razon)
+    )
+    zona = (nuevo_cliente.zona_productiva or "").strip() or "Argentina"
+    cur.execute(
+        """
+        INSERT INTO clientes (nombre_razon_social, email_contacto, zona_productiva)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (email_contacto) DO UPDATE SET
+            nombre_razon_social = EXCLUDED.nombre_razon_social,
+            zona_productiva = EXCLUDED.zona_productiva
+        RETURNING id, nombre_razon_social;
+        """,
+        (razon, email, zona),
+    )
+    row = cur.fetchone()
+    return row["id"], row["nombre_razon_social"]
+
+
 @app.post("/api/lotes", status_code=201)
 def crear_lote(req: LoteCreateRequest):
     """
@@ -260,36 +306,9 @@ def crear_lote(req: LoteCreateRequest):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        cliente_id = req.cliente_id
-        if cliente_id is None:
-            if not req.nuevo_cliente or not req.nuevo_cliente.nombre_razon_social.strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="Debe seleccionar un establecimiento existente o indicar uno nuevo.",
-                )
-            razon = req.nuevo_cliente.nombre_razon_social.strip()
-            email = (
-                req.nuevo_cliente.email_contacto.strip()
-                if req.nuevo_cliente.email_contacto and req.nuevo_cliente.email_contacto.strip()
-                else agro_services.slug_email_establecimiento(razon)
-            )
-            zona = (req.nuevo_cliente.zona_productiva or "").strip() or "Argentina"
-            cur.execute(
-                """
-                INSERT INTO clientes (nombre_razon_social, email_contacto, zona_productiva)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (email_contacto) DO UPDATE SET
-                    nombre_razon_social = EXCLUDED.nombre_razon_social,
-                    zona_productiva = EXCLUDED.zona_productiva
-                RETURNING id;
-                """,
-                (razon, email, zona),
-            )
-            cliente_id = cur.fetchone()["id"]
-        else:
-            cur.execute("SELECT id FROM clientes WHERE id = %s;", (cliente_id,))
-            if not cur.fetchone():
-                raise HTTPException(status_code=404, detail="Establecimiento no encontrado.")
+        cliente_id, cliente_nombre = _resolver_o_crear_cliente(
+            cur, req.cliente_id, req.nuevo_cliente
+        )
 
         geom_json = json.dumps(geom_norm)
         cur.execute(
@@ -358,6 +377,7 @@ def crear_lote(req: LoteCreateRequest):
     return {
         "id": creado["id"],
         "nombre_lote": creado["nombre_lote"],
+        "cliente": cliente_nombre,
         "hectareas": float(creado["hectareas"] or 0),
         "clima_dias_ingestados": clima_dias,
         "satelite_workflow_disparado": satelite_disparado,
@@ -366,17 +386,23 @@ def crear_lote(req: LoteCreateRequest):
 
 @app.patch("/api/lotes/{lote_id}")
 def actualizar_lote(lote_id: int, body: LoteUpdateRequest):
-    """Permite editar nombre, cultivo, campaña o fecha de siembra de un lote existente."""
+    """Permite editar dueño, nombre, cultivo, campaña o fecha de siembra de un lote existente."""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
         cur.execute(
-            "SELECT id, nombre_lote, cultivo_actual, campana, fecha_siembra FROM lotes WHERE id = %s;",
+            "SELECT id, cliente_id, nombre_lote, cultivo_actual, campana, fecha_siembra FROM lotes WHERE id = %s;",
             (lote_id,),
         )
         actual = cur.fetchone()
         if not actual:
             raise HTTPException(status_code=404, detail="Lote no encontrado.")
+
+        cliente_id = actual["cliente_id"]
+        if body.cliente_id is not None or body.nuevo_cliente is not None:
+            cliente_id, _ = _resolver_o_crear_cliente(
+                cur, body.cliente_id, body.nuevo_cliente
+            )
 
         nombre = body.nombre_lote.strip() if body.nombre_lote is not None else actual["nombre_lote"]
         cultivo = body.cultivo_actual.strip() if body.cultivo_actual is not None else actual["cultivo_actual"]
@@ -393,18 +419,22 @@ def actualizar_lote(lote_id: int, body: LoteUpdateRequest):
         cur.execute(
             """
             UPDATE lotes
-            SET nombre_lote = %s,
+            SET cliente_id = %s,
+                nombre_lote = %s,
                 cultivo_actual = %s,
                 campana = %s,
                 fecha_siembra = %s
             WHERE id = %s
-            RETURNING id, nombre_lote, cultivo_actual, campana, fecha_siembra::text AS fecha_siembra;
+            RETURNING id, cliente_id, nombre_lote, cultivo_actual, campana, fecha_siembra::text AS fecha_siembra;
             """,
-            (nombre, cultivo, campana, fecha_siembra, lote_id),
+            (cliente_id, nombre, cultivo, campana, fecha_siembra, lote_id),
         )
         actualizado = cur.fetchone()
         conn.commit()
         return actualizado
+    except HTTPException:
+        conn.rollback()
+        raise
     finally:
         cur.close()
         conn.close()

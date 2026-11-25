@@ -162,6 +162,7 @@ export default function Home() {
   const [contextoRecorrida, setContextoRecorrida] = useState<ContextoRecorrida | null>(null);
   const [recorridaNonce, setRecorridaNonce] = useState(0);
   const [avisoOperativo, setAvisoOperativo] = useState<string | null>(null);
+  const [ahoraMs, setAhoraMs] = useState<number | null>(null);
 
   // Estados compartidos del Módulo Económico y Minuta de Gestión (persistidos en BD + localStorage)
   const [supuestos, setSupuestos] = useState<Record<string, SupuestoCultivo>>(
@@ -512,6 +513,7 @@ export default function Home() {
         if (resRecorridas.ok) {
           setRecorridas((await resRecorridas.json()) as RecorridaCampo[]);
         }
+        setAhoraMs(Date.now());
       } catch (err) {
         console.error("Error conectando con FastAPI:", err);
       } finally {
@@ -939,6 +941,37 @@ export default function Home() {
                 </div>
               )}
 
+              <p className="mb-2 text-[11px] text-slate-400 shrink-0">
+                Aquí solo figuran lotes con anomalías detectadas por IA. Los lotes sanos o recién cargados aparecen en verde en el mapa.
+              </p>
+
+              {(geojsonFiltrado?.features || []).some(
+                (f) => f.properties?.ultimo_ndvi == null
+              ) && (
+                <div className="mb-2.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-200 shrink-0 space-y-1">
+                  <div className="font-medium">
+                    Lotes nuevos esperando lectura satelital Sentinel-2:
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(geojsonFiltrado?.features || [])
+                      .filter((f) => f.properties?.ultimo_ndvi == null)
+                      .map((f) => {
+                        const id = Number(f.properties?.id);
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            onClick={() => seleccionarLoteConZoom(id)}
+                            className="rounded border border-sky-400/40 bg-sky-950/60 px-2 py-0.5 text-[10px] text-sky-200 hover:bg-sky-500/20 transition"
+                          >
+                            {String(f.properties?.nombre_lote || `Lote ${id}`)}
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
               <div className="flex-1 overflow-y-auto space-y-3 pr-1">
                 {alertasFiltradas.length === 0 ? (
                   <p className="text-center py-12 text-sm text-slate-400">
@@ -1032,6 +1065,7 @@ export default function Home() {
                                   nombreLote: alerta.nombre_lote,
                                   alertaId: alerta.id,
                                   alertaTipo: alerta.tipo_anomalia,
+                                  fechaDefault: new Date().toISOString().split("T")[0],
                                 });
                               }}
                               className="text-xs px-2 py-1.5 sm:py-2 min-h-[36px] flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 hover:border-emerald-500/40 hover:text-emerald-300 transition"
@@ -1056,6 +1090,7 @@ export default function Home() {
                                         alertaId: alerta.id,
                                         alertaTipo: alerta.tipo_anomalia,
                                         nuevoEstadoAlerta: "EN_REVISION",
+                                        fechaDefault: new Date().toISOString().split("T")[0],
                                       });
                                     }}
                                     className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 transition active:scale-95 disabled:opacity-50"
@@ -1075,6 +1110,7 @@ export default function Home() {
                                       alertaId: alerta.id,
                                       alertaTipo: alerta.tipo_anomalia,
                                       nuevoEstadoAlerta: "RESUELTA",
+                                      fechaDefault: new Date().toISOString().split("T")[0],
                                     });
                                   }}
                                   className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center gap-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 hover:bg-emerald-500/20 transition active:scale-95 disabled:opacity-50"
@@ -1105,9 +1141,14 @@ export default function Home() {
             cargandoPronostico={cargandoPronostico}
             alertasVisibles={alertasContexto}
             recorridasDelLote={recorridasLoteActivo}
+            ahoraMs={ahoraMs}
             onAbrirRecorrida={(idLote, nombre) => {
               setRecorridaNonce((n) => n + 1);
-              setContextoRecorrida({ loteId: idLote, nombreLote: nombre });
+              setContextoRecorrida({
+                loteId: idLote,
+                nombreLote: nombre,
+                fechaDefault: new Date().toISOString().split("T")[0],
+              });
             }}
             onEditarLote={(lote) => {
               setLoteParaEditar(lote);
@@ -1280,65 +1321,71 @@ export default function Home() {
       )}
       </main>
 
-      <MinutaGestionModal
-        abierto={mostrarMinuta}
-        onCerrar={() => setMostrarMinuta(false)}
-        filtroCliente={filtroCliente}
-        filtroCampana={filtroCampana}
-        ultimaFecha={ultimaFecha}
-        cartera={carteraEconomica}
-        esCampoAlquilado={esCampoAlquilado}
-        arriendoQqSoja={arriendoQqSoja}
-        escenario={escenario}
-        alertasVisibles={alertasContexto}
-        recorridasVisibles={recorridasContexto}
-        pronosticoLote={pronosticoLote}
-      />
+      {mostrarMinuta && (
+        <MinutaGestionModal
+          abierto={mostrarMinuta}
+          onCerrar={() => setMostrarMinuta(false)}
+          filtroCliente={filtroCliente}
+          filtroCampana={filtroCampana}
+          ultimaFecha={ultimaFecha}
+          cartera={carteraEconomica}
+          esCampoAlquilado={esCampoAlquilado}
+          arriendoQqSoja={arriendoQqSoja}
+          escenario={escenario}
+          alertasVisibles={alertasContexto}
+          recorridasVisibles={recorridasContexto}
+          pronosticoLote={pronosticoLote}
+        />
+      )}
 
-      <GestionLotesModal
-        key={`lote-modal-${modalLoteNonce}-${loteParaEditar?.id ?? "new"}`}
-        abierto={modalLoteAbierto}
-        loteEditar={loteParaEditar}
-        clientes={clientesLista}
-        apiUrl={API_URL}
-        onCerrar={() => setModalLoteAbierto(false)}
-        onLoteCreado={async (res: ResultadoAltaLote) => {
-          await recargarDatos();
-          seleccionarLoteConZoom(res.id);
-          setAvisoOperativo(
-            `Lote "${res.nombre_lote}" creado (${res.hectareas} ha). Clima precargado (${res.clima_dias_ingestados} días NASA POWER). ${
-              res.satelite_workflow_disparado
-                ? "Ingesta satelital Sentinel-2 disparada."
-                : "Imágenes Sentinel-2 disponibles tras el próximo ciclo ETL (06:00 hs)."
-            }`
-          );
-        }}
-        onLoteActualizado={async () => {
-          await recargarDatos();
-          setAvisoOperativo("Datos agronómicos del lote actualizados.");
-        }}
-        onLoteEliminado={async (idBorrado: number, nombre: string) => {
-          if (loteSeleccionado === idBorrado) {
-            setLoteSeleccionado(null);
-          }
-          await recargarDatos();
-          setAvisoOperativo(`Lote "${nombre}" eliminado.`);
-        }}
-      />
+      {modalLoteAbierto && (
+        <GestionLotesModal
+          key={`lote-modal-${modalLoteNonce}-${loteParaEditar?.id ?? "new"}`}
+          abierto={modalLoteAbierto}
+          loteEditar={loteParaEditar}
+          clientes={clientesLista}
+          apiUrl={API_URL}
+          onCerrar={() => setModalLoteAbierto(false)}
+          onLoteCreado={async (res: ResultadoAltaLote) => {
+            await recargarDatos();
+            seleccionarLoteConZoom(res.id);
+            setAvisoOperativo(
+              `Lote "${res.nombre_lote}" (${res.cliente ? `${res.cliente}, ` : ""}${res.hectareas} ha) creado. Clima precargado (${res.clima_dias_ingestados} días NASA POWER). ${
+                res.satelite_workflow_disparado
+                  ? "Ingesta satelital Sentinel-2 disparada."
+                  : "Imágenes Sentinel-2 disponibles tras el próximo ciclo ETL (06:00 hs)."
+              }`
+            );
+          }}
+          onLoteActualizado={async () => {
+            await recargarDatos();
+            setAvisoOperativo("Datos agronómicos del lote actualizados.");
+          }}
+          onLoteEliminado={async (idBorrado: number, nombre: string) => {
+            if (loteSeleccionado === idBorrado) {
+              setLoteSeleccionado(null);
+            }
+            await recargarDatos();
+            setAvisoOperativo(`Lote "${nombre}" eliminado.`);
+          }}
+        />
+      )}
 
-      <RecorridaModal
-        key={`rec-modal-${recorridaNonce}`}
-        contexto={contextoRecorrida}
-        apiUrl={API_URL}
-        onCerrar={() => setContextoRecorrida(null)}
-        onGuardado={async () => {
-          await recargarDatos();
-          setAvisoOperativo("Recorrida a campo guardada en la bitácora.");
-        }}
-        onSoloCambiarEstado={async (alertaId, nuevoEstado) => {
-          await actualizarEstadoAlerta(alertaId, nuevoEstado);
-        }}
-      />
+      {contextoRecorrida && (
+        <RecorridaModal
+          key={`rec-modal-${recorridaNonce}`}
+          contexto={contextoRecorrida}
+          apiUrl={API_URL}
+          onCerrar={() => setContextoRecorrida(null)}
+          onGuardado={async () => {
+            await recargarDatos();
+            setAvisoOperativo("Recorrida a campo guardada en la bitácora.");
+          }}
+          onSoloCambiarEstado={async (alertaId, nuevoEstado) => {
+            await actualizarEstadoAlerta(alertaId, nuevoEstado);
+          }}
+        />
+      )}
     </div>
   );
 }

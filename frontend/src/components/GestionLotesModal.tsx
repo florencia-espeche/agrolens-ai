@@ -12,14 +12,20 @@ import {
   Trash2,
   AlertCircle,
   CheckCircle2,
+  Crosshair,
+  LocateFixed,
 } from "lucide-react";
 import {
   parsearArchivoPoligonos,
   normalizarAnillo,
   calcularHectareasAprox,
+  parsearParLatLon,
+  generarPoligonoDesdeCentro,
+  parsearCoordenadasTexto,
   type GeoJsonPolygon,
   type PoligonoImportado,
 } from "@/lib/geoImport";
+import type { CentroMapaObjetivo } from "@/components/MapaDibujoLote";
 
 const MapaDibujoLote = dynamic(() => import("@/components/MapaDibujoLote"), {
   ssr: false,
@@ -39,6 +45,7 @@ export interface ClienteDisponible {
 
 export interface LoteEditable {
   id: number;
+  cliente_id?: number | null;
   nombre_lote: string;
   cultivo_actual: string;
   campana: string;
@@ -50,6 +57,7 @@ export interface LoteEditable {
 export interface ResultadoAltaLote {
   id: number;
   nombre_lote: string;
+  cliente?: string;
   hectareas: number;
   clima_dias_ingestados: number;
   satelite_workflow_disparado: boolean;
@@ -90,15 +98,29 @@ export default function GestionLotesModal({
   const cultivoInicial = loteEditar?.cultivo_actual || "Soja 1ra";
   const cultivoEnLista = CULTIVOS_SUGERIDOS.includes(cultivoInicial);
 
-  const [modoGeometria, setModoGeometria] = useState<"archivo" | "dibujo">("archivo");
+  const [modoGeometria, setModoGeometria] = useState<"archivo" | "dibujo" | "coordenadas">("dibujo");
   const [poligonosArchivo, setPoligonosArchivo] = useState<PoligonoImportado[]>([]);
   const [indicePoligono, setIndicePoligono] = useState(0);
   const [puntosDibujo, setPuntosDibujo] = useState<[number, number][]>([]);
+  const [irACoordsInput, setIrACoordsInput] = useState("");
+  const [centroObjetivo, setCentroObjetivo] = useState<CentroMapaObjetivo | null>(null);
+
+  const [subModoCoords, setSubModoCoords] = useState<"centro" | "vertices">("centro");
+  const [centroLatInput, setCentroLatInput] = useState("");
+  const [centroLonInput, setCentroLonInput] = useState("");
+  const [centroHectareasInput, setCentroHectareasInput] = useState("50");
+  const [ordenCoords, setOrdenCoords] = useState<"lat_lon" | "lon_lat">("lat_lon");
+  const [verticesTexto, setVerticesTexto] = useState("");
+
+  const clienteInicialId = (() => {
+    if (!loteEditar) return "";
+    if (loteEditar.cliente_id != null) return String(loteEditar.cliente_id);
+    const match = clientes.find((c) => c.nombre_razon_social === loteEditar.cliente);
+    return match ? String(match.id) : "";
+  })();
 
   const [usarNuevoCliente, setUsarNuevoCliente] = useState(clientes.length === 0);
-  const [clienteId, setClienteId] = useState<string>(
-    clientes[0] ? String(clientes[0].id) : ""
-  );
+  const [clienteId, setClienteId] = useState<string>(clienteInicialId);
   const [nuevoClienteNombre, setNuevoClienteNombre] = useState("");
   const [nuevoClienteZona, setNuevoClienteZona] = useState("");
   const [nuevoClienteEmail, setNuevoClienteEmail] = useState("");
@@ -118,25 +140,125 @@ export default function GestionLotesModal({
   const [guardando, setGuardando] = useState(false);
   const [confirmarEliminar, setConfirmarEliminar] = useState(false);
 
-  const geometriaActiva: GeoJsonPolygon | null = useMemo(() => {
+  const { geom: geometriaActiva, coordError } = useMemo<{
+    geom: GeoJsonPolygon | null;
+    coordError: string | null;
+  }>(() => {
     if (modoGeometria === "archivo") {
-      return poligonosArchivo[indicePoligono]?.geometry || null;
+      return {
+        geom: poligonosArchivo[indicePoligono]?.geometry || null,
+        coordError: null,
+      };
     }
-    if (puntosDibujo.length < 3) return null;
+
+    if (modoGeometria === "coordenadas") {
+      if (subModoCoords === "centro") {
+        if (!centroLatInput.trim() || !centroLonInput.trim()) {
+          return { geom: null, coordError: null };
+        }
+        try {
+          const geom = generarPoligonoDesdeCentro(
+            Number(centroLatInput),
+            Number(centroLonInput),
+            Number(centroHectareasInput)
+          );
+          return { geom, coordError: null };
+        } catch (err) {
+          return {
+            geom: null,
+            coordError: err instanceof Error ? err.message : "Coordenadas inválidas.",
+          };
+        }
+      }
+
+      if (!verticesTexto.trim()) {
+        return { geom: null, coordError: null };
+      }
+      try {
+        const geom = parsearCoordenadasTexto(verticesTexto, ordenCoords);
+        return { geom, coordError: null };
+      } catch (err) {
+        return {
+          geom: null,
+          coordError: err instanceof Error ? err.message : "Formato de vértices inválido.",
+        };
+      }
+    }
+
+    if (puntosDibujo.length < 3) return { geom: null, coordError: null };
     try {
       const anillo = normalizarAnillo(
         puntosDibujo.map(([lat, lon]) => [lon, lat])
       );
-      return { type: "Polygon", coordinates: [anillo] };
+      return { geom: { type: "Polygon", coordinates: [anillo] }, coordError: null };
     } catch {
-      return null;
+      return { geom: null, coordError: null };
     }
-  }, [modoGeometria, poligonosArchivo, indicePoligono, puntosDibujo]);
+  }, [
+    modoGeometria,
+    poligonosArchivo,
+    indicePoligono,
+    subModoCoords,
+    centroLatInput,
+    centroLonInput,
+    centroHectareasInput,
+    verticesTexto,
+    ordenCoords,
+    puntosDibujo,
+  ]);
 
   const hectareasPreview = useMemo(() => {
     if (!geometriaActiva) return 0;
     return calcularHectareasAprox(geometriaActiva.coordinates);
   }, [geometriaActiva]);
+
+  const handleUbicarMapaDesdeBarra = () => {
+    const par = parsearParLatLon(irACoordsInput);
+    if (!par) {
+      setError(
+        "No se reconocieron coordenadas válidas. Usa Lat, Lon (ej: -32.7205, -62.1295), formato DMS o pega un link de Google Maps."
+      );
+      return;
+    }
+    setError(null);
+    setCentroObjetivo((prev) => ({
+      lat: par[0],
+      lon: par[1],
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+  };
+
+  const handleCentroLatChange = (val: string) => {
+    const par = parsearParLatLon(val);
+    if (par && /[\s,;]+/.test(val.trim())) {
+      setCentroLatInput(String(par[0]));
+      setCentroLonInput(String(par[1]));
+      setCentroObjetivo((prev) => ({
+        lat: par[0],
+        lon: par[1],
+        nonce: (prev?.nonce ?? 0) + 1,
+      }));
+      return;
+    }
+    setCentroLatInput(val);
+  };
+
+  const pasarPoligonoADibujo = () => {
+    if (!geometriaActiva) return;
+    const anillo = geometriaActiva.coordinates[0];
+    const verticesSinCierre: [number, number][] = anillo
+      .slice(0, Math.max(3, anillo.length - 1))
+      .map(([lon, lat]) => [lat, lon]);
+    setPuntosDibujo(verticesSinCierre);
+    const lats = verticesSinCierre.map((p) => p[0]);
+    const lons = verticesSinCierre.map((p) => p[1]);
+    setCentroObjetivo((prev) => ({
+      lat: lats.reduce((a, b) => a + b, 0) / lats.length,
+      lon: lons.reduce((a, b) => a + b, 0) / lons.length,
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+    setModoGeometria("dibujo");
+  };
 
   if (!abierto) return null;
 
@@ -170,10 +292,29 @@ export default function GestionLotesModal({
       setError("Indica el nombre del lote.");
       return;
     }
+    if (usarNuevoCliente && !nuevoClienteNombre.trim()) {
+      setError("Indica el dueño o razón social del nuevo establecimiento.");
+      return;
+    }
+    if (!usarNuevoCliente && !clienteId) {
+      setError("Selecciona quién es el dueño/establecimiento del lote o crea uno nuevo.");
+      return;
+    }
     if (!cultivoFinal) {
       setError("Indica el cultivo actual.");
       return;
     }
+
+    const payloadCliente = {
+      cliente_id: usarNuevoCliente ? null : Number(clienteId),
+      nuevo_cliente: usarNuevoCliente
+        ? {
+            nombre_razon_social: nuevoClienteNombre.trim(),
+            zona_productiva: nuevoClienteZona.trim() || null,
+            email_contacto: nuevoClienteEmail.trim() || null,
+          }
+        : null,
+    };
 
     if (esEdicion && loteEditar) {
       setGuardando(true);
@@ -186,6 +327,7 @@ export default function GestionLotesModal({
             cultivo_actual: cultivoFinal,
             campana: campana.trim() || "2026/2027",
             fecha_siembra: fechaSiembra,
+            ...payloadCliente,
           }),
         });
         if (!res.ok) {
@@ -204,19 +346,13 @@ export default function GestionLotesModal({
 
     if (!geometriaActiva) {
       setError(
-        modoGeometria === "archivo"
-          ? "Sube un archivo KML, KMZ o GeoJSON válido."
-          : "Marca al menos 3 puntos en el mapa para definir el polígono del lote."
+        coordError ||
+          (modoGeometria === "archivo"
+            ? "Sube un archivo KML, KMZ o GeoJSON válido."
+            : modoGeometria === "coordenadas"
+            ? "Ingresa coordenadas válidas para definir el polígono del lote."
+            : "Marca al menos 3 puntos en el mapa para definir el polígono del lote.")
       );
-      return;
-    }
-
-    if (usarNuevoCliente && !nuevoClienteNombre.trim()) {
-      setError("Indica la razón social del nuevo establecimiento.");
-      return;
-    }
-    if (!usarNuevoCliente && !clienteId) {
-      setError("Selecciona un establecimiento o crea uno nuevo.");
       return;
     }
 
@@ -227,14 +363,7 @@ export default function GestionLotesModal({
         cultivo_actual: cultivoFinal,
         campana: campana.trim() || "2026/2027",
         fecha_siembra: fechaSiembra || null,
-        cliente_id: usarNuevoCliente ? null : Number(clienteId),
-        nuevo_cliente: usarNuevoCliente
-          ? {
-              nombre_razon_social: nuevoClienteNombre.trim(),
-              zona_productiva: nuevoClienteZona.trim() || null,
-              email_contacto: nuevoClienteEmail.trim() || null,
-            }
-          : null,
+        ...payloadCliente,
         geometry: geometriaActiva,
       };
 
@@ -253,6 +382,11 @@ export default function GestionLotesModal({
       await onLoteCreado({
         id: data.id,
         nombre_lote: data.nombre_lote || nombreLote.trim(),
+        cliente:
+          data.cliente ||
+          (usarNuevoCliente
+            ? nuevoClienteNombre.trim()
+            : clientes.find((c) => String(c.id) === clienteId)?.nombre_razon_social),
         hectareas: Number(data.hectareas ?? hectareasPreview),
         clima_dias_ingestados: Number(data.clima_dias_ingestados ?? 0),
         satelite_workflow_disparado: Boolean(data.satelite_workflow_disparado),
@@ -317,33 +451,106 @@ export default function GestionLotesModal({
           onSubmit={handleSubmit}
           className="p-4 sm:p-6 space-y-4 max-h-[82vh] overflow-y-auto text-xs"
         >
+          {/* Dueño / Establecimiento visible arriba en alta y edición */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="font-medium text-slate-200 flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                Dueño / Establecimiento del lote *
+              </span>
+              {clientes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setUsarNuevoCliente((v) => !v)}
+                  className="text-[11px] font-medium text-emerald-400 hover:underline"
+                >
+                  {usarNuevoCliente
+                    ? "Elegir establecimiento existente"
+                    : "+ Crear nuevo dueño / establecimiento"}
+                </button>
+              )}
+            </div>
+
+            {!usarNuevoCliente && clientes.length > 0 ? (
+              <select
+                value={clienteId}
+                onChange={(e) => setClienteId(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="">— Selecciona un dueño / establecimiento —</option>
+                {clientes.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.nombre_razon_social}
+                    {c.zona_productiva ? ` (${c.zona_productiva})` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={nuevoClienteNombre}
+                  onChange={(e) => setNuevoClienteNombre(e.target.value)}
+                  placeholder="Dueño / Razón social *"
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                />
+                <input
+                  type="text"
+                  value={nuevoClienteZona}
+                  onChange={(e) => setNuevoClienteZona(e.target.value)}
+                  placeholder="Zona (ej: Pergamino)"
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                />
+                <input
+                  type="email"
+                  value={nuevoClienteEmail}
+                  onChange={(e) => setNuevoClienteEmail(e.target.value)}
+                  placeholder="Email (opcional)"
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            )}
+          </div>
+
           {!esEdicion && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="inline-flex rounded-lg border border-slate-700 bg-slate-950 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setModoGeometria("archivo")}
-                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium transition ${
-                      modoGeometria === "archivo"
-                        ? "bg-emerald-500 text-slate-950 font-semibold"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    <Upload className="w-3.5 h-3.5" />
-                    <span>Subir KML / KMZ / GeoJSON</span>
-                  </button>
+                <div className="inline-flex flex-wrap rounded-lg border border-slate-700 bg-slate-950 p-0.5 gap-0.5">
                   <button
                     type="button"
                     onClick={() => setModoGeometria("dibujo")}
-                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium transition ${
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium transition ${
                       modoGeometria === "dibujo"
                         ? "bg-emerald-500 text-slate-950 font-semibold"
                         : "text-slate-400 hover:text-slate-200"
                     }`}
                   >
                     <PenTool className="w-3.5 h-3.5" />
-                    <span>Dibujar en el mapa</span>
+                    <span>Ubicar y dibujar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModoGeometria("archivo")}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium transition ${
+                      modoGeometria === "archivo"
+                        ? "bg-emerald-500 text-slate-950 font-semibold"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>KML / GeoJSON</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModoGeometria("coordenadas")}
+                    className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium transition ${
+                      modoGeometria === "coordenadas"
+                        ? "bg-emerald-500 text-slate-950 font-semibold"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    <Crosshair className="w-3.5 h-3.5" />
+                    <span>Vértices / Centro</span>
                   </button>
                 </div>
 
@@ -355,7 +562,7 @@ export default function GestionLotesModal({
                 )}
               </div>
 
-              {modoGeometria === "archivo" ? (
+              {modoGeometria === "archivo" && (
                 <div className="space-y-2.5">
                   <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-700 bg-slate-950/60 px-4 py-4 cursor-pointer hover:border-emerald-500/60 transition">
                     <Upload className="w-5 h-5 text-emerald-400" />
@@ -402,25 +609,220 @@ export default function GestionLotesModal({
                     </div>
                   )}
                 </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setPuntosDibujo((prev) => prev.slice(0, -1))}
-                    disabled={puntosDibujo.length === 0}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-40"
-                  >
-                    <Undo2 className="w-3.5 h-3.5" />
-                    <span>Deshacer punto</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPuntosDibujo([])}
-                    disabled={puntosDibujo.length === 0}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] text-slate-300 hover:bg-slate-700 disabled:opacity-40"
-                  >
-                    Limpiar dibujo
-                  </button>
+              )}
+
+              {modoGeometria === "coordenadas" && (
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="inline-flex rounded-lg border border-slate-700 bg-slate-900 p-0.5 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() => setSubModoCoords("centro")}
+                        className={`rounded-md px-2.5 py-1 font-medium transition ${
+                          subModoCoords === "centro"
+                            ? "bg-sky-500 text-slate-950 font-semibold"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        Punto central + hectáreas
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubModoCoords("vertices")}
+                        className={`rounded-md px-2.5 py-1 font-medium transition ${
+                          subModoCoords === "vertices"
+                            ? "bg-sky-500 text-slate-950 font-semibold"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        Vértices del polígono
+                      </button>
+                    </div>
+
+                    {geometriaActiva && (
+                      <button
+                        type="button"
+                        onClick={pasarPoligonoADibujo}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 transition"
+                      >
+                        <PenTool className="w-3 h-3" />
+                        <span>Ajustar esquinas en el mapa</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {subModoCoords === "centro" ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <label className="block">
+                          <span className="text-[11px] text-slate-300 block mb-1">
+                            Latitud (o pega Lat, Lon)
+                          </span>
+                          <input
+                            type="text"
+                            value={centroLatInput}
+                            onChange={(e) => handleCentroLatChange(e.target.value)}
+                            placeholder="-32.7205"
+                            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-[11px] text-slate-300 block mb-1">
+                            Longitud
+                          </span>
+                          <input
+                            type="text"
+                            value={centroLonInput}
+                            onChange={(e) => setCentroLonInput(e.target.value)}
+                            placeholder="-62.1295"
+                            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-[11px] text-slate-300 block mb-1">
+                            Superficie aprox. (ha)
+                          </span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={50000}
+                            step="1"
+                            value={centroHectareasInput}
+                            onChange={(e) => setCentroHectareasInput(e.target.value)}
+                            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+                          />
+                        </label>
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Pega directamente un punto copiado de Google Maps (ej. <code className="text-slate-300">-32.7205, -62.1295</code>) en Latitud y generamos el cuadro inicial en el mapa satelital.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          <span className="text-slate-400">Orden:</span>
+                          <button
+                            type="button"
+                            onClick={() => setOrdenCoords("lat_lon")}
+                            className={`rounded border px-2 py-0.5 transition ${
+                              ordenCoords === "lat_lon"
+                                ? "border-emerald-500 bg-emerald-500/15 text-emerald-300 font-medium"
+                                : "border-slate-700 bg-slate-900 text-slate-400"
+                            }`}
+                          >
+                            Lat, Lon (Google Maps)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setOrdenCoords("lon_lat")}
+                            className={`rounded border px-2 py-0.5 transition ${
+                              ordenCoords === "lon_lat"
+                                ? "border-emerald-500 bg-emerald-500/15 text-emerald-300 font-medium"
+                                : "border-slate-700 bg-slate-900 text-slate-400"
+                            }`}
+                          >
+                            Lon, Lat (WKT / GeoJSON)
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOrdenCoords("lat_lon");
+                            setVerticesTexto(
+                              "-32.7250, -62.1350\n-32.7250, -62.1240\n-32.7160, -62.1240\n-32.7160, -62.1350"
+                            );
+                          }}
+                          className="text-[11px] text-sky-300 hover:underline"
+                        >
+                          Cargar ejemplo
+                        </button>
+                      </div>
+
+                      <textarea
+                        rows={3}
+                        value={verticesTexto}
+                        onChange={(e) => setVerticesTexto(e.target.value)}
+                        placeholder={
+                          ordenCoords === "lat_lon"
+                            ? "Un vértice por línea, ej:\n-32.7250, -62.1350\n-32.7250, -62.1240\n-32.7160, -62.1240\n-32.7160, -62.1350"
+                            : "Un vértice por línea (lon, lat) o WKT POLYGON((-62.135 -32.725, ...))"
+                        }
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-[11px] text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                  )}
+
+                  {coordError && (
+                    <p className="text-[11px] text-amber-300">{coordError}</p>
+                  )}
+                </div>
+              )}
+
+              {modoGeometria === "dibujo" && (
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-sky-300 flex items-center gap-1.5">
+                      <LocateFixed className="w-3.5 h-3.5 shrink-0" />
+                      <span>1. Ubica el lote por coordenadas o link de Google Maps</span>
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setPuntosDibujo((prev) => prev.slice(0, -1))}
+                        disabled={puntosDibujo.length === 0}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-slate-700 disabled:opacity-40"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" />
+                        <span>Deshacer punto</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPuntosDibujo([])}
+                        disabled={puntosDibujo.length === 0}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] text-slate-300 hover:bg-slate-700 disabled:opacity-40"
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={irACoordsInput}
+                      onChange={(e) => setIrACoordsInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleUbicarMapaDesdeBarra();
+                        }
+                      }}
+                      placeholder="Pegar Lat, Lon, DMS o link Google Maps (ej: -32.7205, -62.1295)"
+                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleUbicarMapaDesdeBarra}
+                      className="inline-flex items-center gap-1.5 shrink-0 rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 transition"
+                    >
+                      <LocateFixed className="w-3.5 h-3.5" />
+                      <span>Ubicar en mapa</span>
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
+                    <span>
+                      2. Haz clic en las esquinas del potrero sobre el satélite para marcar el contorno.
+                    </span>
+                    {centroObjetivo && (
+                      <span className="font-mono text-amber-300">
+                        Pin guía: {centroObjetivo.lat.toFixed(4)}, {centroObjetivo.lon.toFixed(4)}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -430,70 +832,14 @@ export default function GestionLotesModal({
                 onAgregarPunto={(lat, lon) =>
                   setPuntosDibujo((prev) => [...prev, [lat, lon]])
                 }
-                poligonoPreview={modoGeometria === "archivo" ? geometriaActiva : null}
+                onActualizarPunto={(idx, lat, lon) =>
+                  setPuntosDibujo((prev) =>
+                    prev.map((pt, i) => (i === idx ? [lat, lon] : pt))
+                  )
+                }
+                poligonoPreview={modoGeometria !== "dibujo" ? geometriaActiva : null}
+                centroObjetivo={centroObjetivo}
               />
-            </div>
-          )}
-
-          {/* Establecimiento (solo al crear) */}
-          {!esEdicion && (
-            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2.5">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="font-medium text-slate-200 flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                  Establecimiento / Cliente
-                </span>
-                {clientes.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setUsarNuevoCliente((v) => !v)}
-                    className="text-[11px] text-emerald-400 hover:underline"
-                  >
-                    {usarNuevoCliente
-                      ? "Elegir establecimiento existente"
-                      : "+ Crear nuevo establecimiento"}
-                  </button>
-                )}
-              </div>
-
-              {!usarNuevoCliente && clientes.length > 0 ? (
-                <select
-                  value={clienteId}
-                  onChange={(e) => setClienteId(e.target.value)}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
-                >
-                  {clientes.map((c) => (
-                    <option key={c.id} value={String(c.id)}>
-                      {c.nombre_razon_social}
-                      {c.zona_productiva ? ` (${c.zona_productiva})` : ""}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    type="text"
-                    value={nuevoClienteNombre}
-                    onChange={(e) => setNuevoClienteNombre(e.target.value)}
-                    placeholder="Razón social *"
-                    className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-                  />
-                  <input
-                    type="text"
-                    value={nuevoClienteZona}
-                    onChange={(e) => setNuevoClienteZona(e.target.value)}
-                    placeholder="Zona (ej: Pergamino)"
-                    className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-                  />
-                  <input
-                    type="email"
-                    value={nuevoClienteEmail}
-                    onChange={(e) => setNuevoClienteEmail(e.target.value)}
-                    placeholder="Email (opcional)"
-                    className="rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-              )}
             </div>
           )}
 

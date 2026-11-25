@@ -271,3 +271,166 @@ export async function parsearArchivoPoligonos(
   }
   return parsearGeoJsonLocal(texto);
 }
+
+/**
+ * Interpreta una ubicación desde:
+ * - Par decimal: "-32.7205, -62.1295" o "-32.7205 -62.1295"
+ * - Grados Minutos Segundos (DMS): 32°43'13.8"S 62°07'46.2"W (o O para Oeste)
+ * - URL de Google Maps con @lat,lon, ?q=lat,lon o !3dlat!4dlon
+ */
+export function parsearParLatLon(texto: string): [number, number] | null {
+  const raw = texto.trim();
+  if (!raw) return null;
+
+  // 1. Links de Google Maps
+  const urlPatterns = [
+    /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /[?&](?:q|ll|center)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+  ];
+  for (const regex of urlPatterns) {
+    const m = raw.match(regex);
+    if (m) {
+      const lat = Number(m[1]);
+      const lon = Number(m[2]);
+      if (Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+        return [lat, lon];
+      }
+    }
+  }
+
+  // 2. Formato DMS (ej: 32°43'13.8"S 62°07'46.2"W)
+  const dmsRegex = /(\d+(?:\.\d+)?)\s*[°º]\s*(?:(\d+(?:\.\d+)?)\s*['′’]\s*)?(?:(\d+(?:\.\d+)?)\s*(?:"|''|″|”)?\s*)?([NSEWO])/gi;
+  const dmsMatches = [...raw.matchAll(dmsRegex)];
+  if (dmsMatches.length >= 2) {
+    const toDecimal = (m: RegExpMatchArray): number => {
+      const g = Number(m[1]);
+      const min = m[2] ? Number(m[2]) : 0;
+      const seg = m[3] ? Number(m[3]) : 0;
+      const hemi = m[4].toUpperCase();
+      const absVal = g + min / 60 + seg / 3600;
+      return hemi === "S" || hemi === "W" || hemi === "O" ? -absVal : absVal;
+    };
+    let lat: number | null = null;
+    let lon: number | null = null;
+    for (const m of dmsMatches) {
+      const h = m[4].toUpperCase();
+      if ((h === "N" || h === "S") && lat === null) lat = toDecimal(m);
+      if ((h === "E" || h === "W" || h === "O") && lon === null) lon = toDecimal(m);
+    }
+    if (lat !== null && lon !== null && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+      return [Number(lat.toFixed(6)), Number(lon.toFixed(6))];
+    }
+  }
+
+  // 3. Par decimal clásico ("lat, lon" o "lat lon")
+  const limpio = raw.replace(/[()[\]]/g, "").trim();
+  const partes = limpio.split(/[\s,;]+/).filter(Boolean);
+  if (partes.length < 2) return null;
+
+  const lat = Number(partes[0]);
+  const lon = Number(partes[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return [lat, lon];
+}
+
+/** Construye un polígono rectangular centrado en (lat, lon) con la superficie indicada en ha. */
+export function generarPoligonoDesdeCentro(
+  lat: number,
+  lon: number,
+  hectareas: number
+): GeoJsonPolygon {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    throw new Error("Ingresa latitud y longitud numéricas válidas.");
+  }
+  if (lat <= -85 || lat >= 85 || lon < -180 || lon > 180) {
+    throw new Error("Coordenadas fuera de rango geográfico (Lat -85..85, Lon -180..180).");
+  }
+  if (!Number.isFinite(hectareas) || hectareas < 0.5 || hectareas > 50000) {
+    throw new Error("La superficie aproximada debe estar entre 0.5 y 50.000 ha.");
+  }
+
+  const areaM2 = hectareas * 10000;
+  const ladoM = Math.sqrt(areaM2);
+  const halfLatDeg = ladoM / 2 / 111320;
+  const cosLat = Math.max(0.1, Math.cos((lat * Math.PI) / 180));
+  const halfLonDeg = ladoM / 2 / (111320 * cosLat);
+
+  const anillo = normalizarAnillo([
+    [lon - halfLonDeg, lat - halfLatDeg],
+    [lon + halfLonDeg, lat - halfLatDeg],
+    [lon + halfLonDeg, lat + halfLatDeg],
+    [lon - halfLonDeg, lat + halfLatDeg],
+  ]);
+  return { type: "Polygon", coordinates: [anillo] };
+}
+
+/**
+ * Parsea una lista manual de vértices (una coordenada por línea, JSON o WKT POLYGON((...))).
+ */
+export function parsearCoordenadasTexto(
+  texto: string,
+  orden: "lat_lon" | "lon_lat"
+): GeoJsonPolygon {
+  const raw = texto.trim();
+  if (!raw) {
+    throw new Error("Ingresa al menos 3 pares de coordenadas para armar el polígono.");
+  }
+
+  // Soporte JSON array directo: [[-62.1, -32.7], ...]
+  if (raw.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed) && parsed.length >= 3) {
+        const coords: number[][] = [];
+        for (const item of parsed) {
+          if (!Array.isArray(item) || item.length < 2) continue;
+          const v1 = Number(item[0]);
+          const v2 = Number(item[1]);
+          coords.push(orden === "lat_lon" ? [v2, v1] : [v1, v2]);
+        }
+        return { type: "Polygon", coordinates: [normalizarAnillo(coords)] };
+      }
+    } catch {
+      // Continúa con parseo por texto libre
+    }
+  }
+
+  // Soporte WKT: POLYGON((-62.135 -32.725, ...))
+  const wktMatch = raw.match(/POLYGON\s*\(\(\s*([^)]+)\s*\)\)/i);
+  const puntosCrudos: number[][] = [];
+
+  if (wktMatch) {
+    const tokens = wktMatch[1].split(",");
+    for (const tok of tokens) {
+      const nums = tok.trim().split(/\s+/).map(Number);
+      if (nums.length >= 2 && Number.isFinite(nums[0]) && Number.isFinite(nums[1])) {
+        puntosCrudos.push(
+          orden === "lat_lon" ? [nums[1], nums[0]] : [nums[0], nums[1]]
+        );
+      }
+    }
+  } else {
+    const segmentos = raw
+      .split(/[\n;]+/)
+      .map((s) => s.trim())
+      .filter((s) => s && !s.startsWith("#") && !s.startsWith("//"));
+
+    for (const seg of segmentos) {
+      const nums = seg
+        .replace(/[()[\]]/g, "")
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .map(Number);
+      if (nums.length < 2 || !Number.isFinite(nums[0]) || !Number.isFinite(nums[1])) {
+        throw new Error(`No se pudo leer la línea de coordenada: "${seg}"`);
+      }
+      puntosCrudos.push(
+        orden === "lat_lon" ? [nums[1], nums[0]] : [nums[0], nums[1]]
+      );
+    }
+  }
+
+  return { type: "Polygon", coordinates: [normalizarAnillo(puntosCrudos)] };
+}
