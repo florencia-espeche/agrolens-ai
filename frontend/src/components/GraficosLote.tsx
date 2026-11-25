@@ -88,6 +88,21 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
     return Number((suma / valores.length).toFixed(2));
   }, [sateliteFiltrado]);
 
+  // Lluvia acumulada y días con lluvia en la ventana activa
+  const resumenClimaVentana = useMemo(() => {
+    const lluviaTotal = climaFiltrado.reduce(
+      (acc, c) => acc + (Number(c.precipitacion_mm) || 0),
+      0
+    );
+    const diasConLluvia = climaFiltrado.filter(
+      (c) => (Number(c.precipitacion_mm) || 0) >= 2
+    ).length;
+    return {
+      lluviaTotal: Number(lluviaTotal.toFixed(1)),
+      diasConLluvia,
+    };
+  }, [climaFiltrado]);
+
   // Exportación de la serie combinada a CSV con codificación UTF-8 BOM
   const totalRegistros = sateliteFiltrado.length + climaFiltrado.length;
 
@@ -203,20 +218,20 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
   }
 
   return (
-    <section className="mt-6 space-y-4">
+    <section className="space-y-4">
       {/* Encabezado con selector de 30 / 60 / 90 días */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
         <div>
-          <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
-            <span>Series Temporales — {series.lote.nombre_lote}</span>
+          <h2 className="text-base sm:text-lg font-semibold text-slate-100 flex items-center gap-2">
+            <span>Evolución del Lote — {series.lote.nombre_lote}</span>
           </h2>
           <p className="text-xs text-slate-400 flex items-center gap-2 flex-wrap">
             <span>Cultivo: {series.lote.cultivo_actual}</span>
             <span>·</span>
-            <span>Ventana de {diasVentana} días</span>
+            <span>Últimos {diasVentana} días</span>
             {promedioNdvi !== null && (
               <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300 border border-amber-500/20">
-                Promedio NDVI: {promedioNdvi}
+                Vigor promedio: {promedioNdvi}
               </span>
             )}
           </p>
@@ -255,14 +270,14 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Gráfico 1: Índices Satelitales (Sentinel-2) */}
         <div className="min-w-0 overflow-hidden bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-4 gap-2">
             <h3 className="font-semibold text-sm flex items-center gap-2">
-              <Activity className="w-4 h-4 text-emerald-400" />
-              Vigor Vegetativo (NDVI) y Humedad (NDWI)
+              <Activity className="w-4 h-4 text-emerald-400 shrink-0" />
+              Vigor del Cultivo (NDVI) y Humedad en Planta (NDWI)
             </h3>
             {promedioNdvi !== null && (
-              <span className="text-[11px] text-amber-400 font-mono">
-                Ref. Promedio: {promedioNdvi}
+              <span className="text-[11px] text-amber-400 font-mono shrink-0">
+                Prom: {promedioNdvi}
               </span>
             )}
           </div>
@@ -316,7 +331,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
                   <Line
                     type="monotone"
                     dataKey="ndvi_mediana"
-                    name="NDVI Mediana"
+                    name="Promedio del lote"
                     stroke="#22c55e"
                     strokeWidth={2.5}
                     dot={{ r: 3 }}
@@ -324,7 +339,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
                   <Line
                     type="monotone"
                     dataKey="ndvi_p90"
-                    name="NDVI P90"
+                    name="Sector más alto (P90)"
                     stroke="#86efac"
                     strokeDasharray="4 4"
                     strokeWidth={1.5}
@@ -333,7 +348,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
                   <Line
                     type="monotone"
                     dataKey="ndvi_p10"
-                    name="NDVI P10"
+                    name="Sector más flojo (P10)"
                     stroke="#eab308"
                     strokeDasharray="4 4"
                     strokeWidth={1.5}
@@ -342,7 +357,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
                   <Line
                     type="monotone"
                     dataKey="ndwi_mediana"
-                    name="NDWI (Agua)"
+                    name="Humedad foliar (NDWI)"
                     stroke="#38bdf8"
                     strokeWidth={2}
                     dot={{ r: 2.5 }}
@@ -351,14 +366,24 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
               </ResponsiveContainer>
             </div>
           )}
+          <p className="mt-2 text-[11px] text-slate-400">
+            Lectura rápida: si las líneas punteadas (P10 y P90) se separan mucho, el lote está desparejo (posible manchoneo).
+          </p>
         </div>
 
         {/* Gráfico 2: Clima Diario (NASA POWER) */}
         <div className="min-w-0 overflow-hidden bg-slate-900 border border-slate-800 rounded-xl p-3 sm:p-4">
-          <h3 className="font-semibold text-sm flex items-center gap-2 mb-4">
-            <CloudRain className="w-4 h-4 text-sky-400" />
-            Precipitaciones (mm) y Temperaturas (°C)
-          </h3>
+          <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <CloudRain className="w-4 h-4 text-sky-400 shrink-0" />
+              Lluvia Diaria (mm) y Temperaturas (°C)
+            </h3>
+            {climaFiltrado.length > 0 && (
+              <span className="inline-flex items-center gap-1 rounded bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 text-[11px] font-medium text-sky-300">
+                Acum. {diasVentana}d: <strong>{resumenClimaVentana.lluviaTotal} mm</strong> ({resumenClimaVentana.diasConLluvia} días)
+              </span>
+            )}
+          </div>
 
           {climaFiltrado.length === 0 ? (
             <p className="text-xs text-slate-400 py-16 text-center">

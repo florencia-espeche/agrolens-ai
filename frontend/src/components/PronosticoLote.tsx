@@ -79,6 +79,10 @@ export default function PronosticoLote({ pronostico, cargando }: PronosticoLoteP
   }
 
   const lluvia7d = pronostico.lluvia_acumulada_mm;
+  const et0Total = pronostico.dias.reduce(
+    (acc, d) => acc + (Number(d.evapotranspiracion_mm) || 0),
+    0
+  );
   const recomendacion =
     lluvia7d >= 15
       ? {
@@ -102,20 +106,28 @@ export default function PronosticoLote({ pronostico, cargando }: PronosticoLoteP
           <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
             <Calendar className="w-4 h-4 text-sky-400 shrink-0" />
             <span>
-              Pronóstico Climático 7 días —{" "}
+              Pronóstico para el Lote (Próximos 7 días) —{" "}
               <span className="text-sky-400">{pronostico.nombre_lote}</span>
             </span>
           </h3>
-          <p className="text-[11px] text-slate-400">
-            Fuente: Open-Meteo (centroide {pronostico.lat}, {pronostico.lon})
+          <p
+            className="text-[11px] text-slate-400"
+            title={`Coordenadas del lote: ${pronostico.lat}, ${pronostico.lon}`}
+          >
+            Lluvias esperadas y consumo hídrico estimado (ET₀) · Datos Open-Meteo
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-xs font-medium text-sky-300">
             <Droplets className="w-3.5 h-3.5" />
-            Lluvia acum. 7d: <strong>{lluvia7d} mm</strong>
+            Lluvia 7d: <strong>{lluvia7d} mm</strong>
           </span>
+          {et0Total > 0 && (
+            <span className="inline-flex items-center rounded-full border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs text-slate-300">
+              Demanda ET₀: <strong className="ml-1 text-slate-100">{et0Total.toFixed(0)} mm</strong>
+            </span>
+          )}
           <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${recomendacion.clase}`}>
             {recomendacion.texto}
           </span>
@@ -166,8 +178,11 @@ export default function PronosticoLote({ pronostico, cargando }: PronosticoLoteP
               </div>
 
               {dia.evapotranspiracion_mm !== null && (
-                <div className="text-[10px] text-slate-500 flex justify-between">
-                  <span>ET₀</span>
+                <div
+                  className="text-[10px] text-slate-500 flex justify-between"
+                  title="Evapotranspiración de referencia (consumo de agua estimado del cultivo)"
+                >
+                  <span>Consumo</span>
                   <span>{dia.evapotranspiracion_mm.toFixed(1)} mm</span>
                 </div>
               )}

@@ -3,11 +3,22 @@
 import { useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import type { FeatureCollection } from "geojson";
-import { AlertTriangle, CheckCircle2, Sprout, MapPin, Send } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Sprout,
+  MapPin,
+  Send,
+  Activity,
+  DollarSign,
+  Sparkles,
+} from "lucide-react";
 import GraficosLote, { type SeriesLote } from "@/components/GraficosLote";
 import ChatLote from "@/components/ChatLote";
 import PronosticoLote, { type PronosticoLoteData } from "@/components/PronosticoLote";
 import KpisGerenciales from "@/components/KpisGerenciales";
+import ModuloEconomico from "@/components/ModuloEconomico";
+import ResumenLoteActivo from "@/components/ResumenLoteActivo";
 
 // Leaflet requiere `window`, por eso se importa sin SSR
 const MapaLotes = dynamic(() => import("@/components/MapaLotes"), {
@@ -62,12 +73,14 @@ export default function Home() {
   const [filtroCliente, setFiltroCliente] = useState<string>("todos");
   const [filtroCampana, setFiltroCampana] = useState<string>("todas");
   const [loteSeleccionado, setLoteSeleccionado] = useState<number | null>(null);
+  const [zoomLoteNonce, setZoomLoteNonce] = useState(0);
   const [cargando, setCargando] = useState(true);
   const [isSlowLoad, setIsSlowLoad] = useState(false);
   const [seriesLote, setSeriesLote] = useState<SeriesLote | null>(null);
   const [cargandoSeries, setCargandoSeries] = useState(false);
   const [pronosticoLote, setPronosticoLote] = useState<PronosticoLoteData | null>(null);
   const [cargandoPronostico, setCargandoPronostico] = useState(false);
+  const [tabDetalle, setTabDetalle] = useState<"campo" | "economia" | "asistente">("campo");
 
   // Estados para la suscripción al Bot de Telegram
   const [chatId, setChatId] = useState("");
@@ -266,6 +279,11 @@ export default function Home() {
     cargarSeriesYPronostico();
   }, [loteActivoId]);
 
+  const seleccionarLoteConZoom = (id: number) => {
+    setLoteSeleccionado(id);
+    setZoomLoteNonce((n) => n + 1);
+  };
+
   const actualizarEstadoAlerta = async (alertaId: number, nuevoEstado: string) => {
     await fetch(`${API_URL}/api/alertas/${alertaId}`, {
       method: "PATCH",
@@ -279,6 +297,20 @@ export default function Home() {
     if (sev === "CRITICA") return "bg-red-500/20 text-red-400 border-red-500/40";
     if (sev === "ALTA") return "bg-orange-500/20 text-orange-400 border-orange-500/40";
     return "bg-yellow-500/20 text-yellow-400 border-yellow-500/40";
+  };
+
+  const formatearEstadoHumano = (estado?: string) => {
+    const e = (estado || "").toUpperCase().trim();
+    if (e === "RESUELTA") return "Resuelta";
+    if (e === "EN_REVISION") return "En revisión";
+    return "Pendiente";
+  };
+
+  const formatearFechaAlerta = (fechaIso?: string) => {
+    if (!fechaIso) return "";
+    const d = new Date(fechaIso);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("es-AR", { day: "2-digit", month: "short" });
   };
 
   const handleSuscribir = async (e: React.FormEvent) => {
@@ -310,23 +342,30 @@ export default function Home() {
           <div>
             <h1 className="text-lg font-bold text-slate-100 sm:text-xl">AgroLens AI</h1>
             <p className="text-xs text-slate-400 sm:text-sm">
-              Monitoreo Satelital (Sentinel-2 + NASA POWER) &amp; Diagnóstico Agronómico
+              Monitoreo Satelital, Clima y Gestión Económica por Lote
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Badge de Frescura de Datos Dinámico */}
-          <div className="w-fit flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300 shadow-sm sm:text-xs">
+          <div
+            title="Actualización diaria automática con imágenes Sentinel-2 y datos NASA POWER"
+            className="w-fit flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300 shadow-sm sm:text-xs"
+          >
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
             </span>
-            <span>Datos Sentinel-2 / NASA · {ultimaFecha}</span>
+            <span>Actualizado: {ultimaFecha}</span>
           </div>
 
           <div className="text-xs sm:text-sm text-slate-400 hidden md:block border-l border-slate-800 pl-3">
-            {geojsonFiltrado ? `${geojsonFiltrado.features.length} lotes monitoreados` : "Conectando..."}
+            {geojsonFiltrado
+              ? `${geojsonFiltrado.features.length} ${
+                  geojsonFiltrado.features.length === 1 ? "lote activo" : "lotes activos"
+                }`
+              : "Conectando..."}
           </div>
         </div>
       </header>
@@ -428,14 +467,12 @@ export default function Home() {
               <div className="flex items-center justify-between mb-2 shrink-0">
                 <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-emerald-400" />
-                  Mapa de Lotes — Córdoba
+                  Mapa de Lotes
                 </h2>
                 <span className="text-xs text-slate-400">
                   {geojsonFiltrado?.features
                     ? `${geojsonFiltrado.features.length} ${
-                        geojsonFiltrado.features.length === 1
-                          ? "parcela georreferenciada"
-                          : "parcelas georreferenciadas"
+                        geojsonFiltrado.features.length === 1 ? "lote activo" : "lotes activos"
                       }`
                     : ""}
                 </span>
@@ -445,14 +482,14 @@ export default function Home() {
                   geojson={geojsonFiltrado}
                   alertas={alertasContexto}
                   loteSeleccionadoId={loteActivoId}
-                  onSelectLote={setLoteSeleccionado}
+                  zoomLoteNonce={zoomLoteNonce}
+                  onSelectLote={seleccionarLoteConZoom}
                 />
               </div>
             </section>
 
-            {/* Columna derecha: Feed de Alertas IA + Tarjeta de Suscripción Telegram */}
-            <div className="min-w-0 flex flex-col gap-4 lg:h-[580px] xl:h-[640px]">
-              <section className="flex max-h-[420px] lg:max-h-none lg:flex-1 min-h-0 flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4">
+            {/* Columna derecha: Feed de Alertas IA a altura completa */}
+            <section className="min-w-0 flex max-h-[420px] lg:max-h-none lg:h-[580px] xl:h-[640px] flex-col rounded-xl border border-slate-800 bg-slate-900/50 p-3 sm:p-4">
               <div className="flex items-center justify-between mb-3 shrink-0">
                 <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-400" />
@@ -508,7 +545,7 @@ export default function Home() {
                     return (
                       <div
                         key={alerta.id}
-                        onClick={() => setLoteSeleccionado(alerta.lote_id)}
+                        onClick={() => seleccionarLoteConZoom(alerta.lote_id)}
                         className={`p-3 rounded-lg border cursor-pointer transition ${
                           loteActivoId === alerta.lote_id
                             ? "bg-slate-800 border-emerald-500/60"
@@ -563,9 +600,18 @@ export default function Home() {
                           </div>
                         )}
 
-                        <div className="flex items-center justify-between border-t border-slate-800 pt-2.5 mt-2">
-                          <span className="text-[11px] text-slate-500">
-                            Estado: <strong className="text-slate-300">{alerta.estado}</strong>
+                        <div className="flex items-center justify-between border-t border-slate-800 pt-2.5 mt-2 gap-2 flex-wrap">
+                          <span className="text-[11px] text-slate-400">
+                            Estado:{" "}
+                            <strong className="text-slate-200">
+                              {formatearEstadoHumano(alerta.estado)}
+                            </strong>
+                            {alerta.fecha_deteccion && (
+                              <span className="text-slate-500">
+                                {" "}
+                                · {formatearFechaAlerta(alerta.fecha_deteccion)}
+                              </span>
+                            )}
                           </span>
                           {alerta.estado !== "RESUELTA" && (
                             <div className="flex items-center gap-1.5 sm:gap-2">
@@ -599,19 +645,111 @@ export default function Home() {
                 )}
               </div>
             </section>
+          </div>
+
+          {/* Selector rápido de lotes + Ficha resumen en lenguaje claro */}
+          <ResumenLoteActivo
+            geojsonFiltrado={geojsonFiltrado}
+            loteActivoId={loteActivoId}
+            onSelectLote={seleccionarLoteConZoom}
+            seriesLote={seriesLote}
+            pronosticoLote={pronosticoLote}
+            cargandoSeries={cargandoSeries}
+            cargandoPronostico={cargandoPronostico}
+            alertasVisibles={alertasContexto}
+          />
+
+          {/* Navegación por pestañas para evitar exceso de scroll */}
+          <div className="flex flex-nowrap overflow-x-auto gap-2 border-b border-slate-800 pb-2">
+            <button
+              type="button"
+              onClick={() => setTabDetalle("campo")}
+              className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs sm:text-sm font-medium transition whitespace-nowrap shrink-0 ${
+                tabDetalle === "campo"
+                  ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+                  : "bg-slate-900 text-slate-300 border border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <Activity className="w-4 h-4" />
+              <span>Evolución Satelital y Clima</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTabDetalle("economia")}
+              className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs sm:text-sm font-medium transition whitespace-nowrap shrink-0 ${
+                tabDetalle === "economia"
+                  ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+                  : "bg-slate-900 text-slate-300 border border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <DollarSign className="w-4 h-4" />
+              <span>Gestión Económica y Márgenes</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setTabDetalle("asistente")}
+              className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs sm:text-sm font-medium transition whitespace-nowrap shrink-0 ${
+                tabDetalle === "asistente"
+                  ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
+                  : "bg-slate-900 text-slate-300 border border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Asistente IA y Alertas Telegram</span>
+            </button>
+          </div>
+
+          {/* Contenido de la pestaña activa */}
+          {tabDetalle === "campo" && (
+            <div className="space-y-4">
+              <GraficosLote series={seriesLote} cargando={cargandoSeries} />
+              {loteActivoId && (
+                <PronosticoLote pronostico={pronosticoLote} cargando={cargandoPronostico} />
+              )}
+            </div>
+          )}
+
+          {tabDetalle === "economia" && (
+            <ModuloEconomico
+              geojsonFiltrado={geojsonFiltrado}
+              alertasVisibles={alertasContexto}
+              loteSeleccionadoId={loteActivoId}
+              onSelectLote={seleccionarLoteConZoom}
+            />
+          )}
+
+          {tabDetalle === "asistente" && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              <div className="lg:col-span-2 min-w-0">
+                {loteActivoId && seriesLote ? (
+                  <ChatLote
+                    loteId={loteActivoId}
+                    loteNombre={seriesLote.lote.nombre_lote}
+                    datosLote={datosCombinadosLote}
+                  />
+                ) : (
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">
+                    Selecciona un lote para consultar al Asistente IA.
+                  </div>
+                )}
+              </div>
 
               {/* Formulario de Suscripción a Telegram */}
               <form
                 onSubmit={handleSuscribir}
-                className="shrink-0 rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-2.5"
+                className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-2.5"
               >
                 <div className="flex items-center gap-2">
                   <Send className="w-4 h-4 text-sky-400" />
                   <h4 className="text-sm font-semibold text-slate-100">
-                    Recibir alertas por Telegram
+                    Recibir avisos diarios en Telegram
                   </h4>
                 </div>
                 <p className="text-xs text-slate-400 leading-relaxed">
+                  Recibe un mensaje automático a las 06:00 hs si algún lote presenta anomalías:
+                  <br />
                   1. Inicia nuestro bot en{" "}
                   <a
                     href={`https://t.me/${botUsername}`}
@@ -622,7 +760,7 @@ export default function Home() {
                     @{botUsername}
                   </a>
                   . <br />
-                  2. Obtén tu ID en{" "}
+                  2. Obtén tu número de usuario en{" "}
                   <a
                     href="https://t.me/userinfobot"
                     target="_blank"
@@ -631,7 +769,7 @@ export default function Home() {
                   >
                     @userinfobot
                   </a>{" "}
-                  y pégalo abajo:
+                  y pégalo aquí:
                 </p>
 
                 <div className="flex gap-2">
@@ -659,27 +797,10 @@ export default function Home() {
                 )}
                 {estadoSub === "error" && (
                   <p className="text-xs text-red-400">
-                    Error al guardar. Verifica tu ID o asegúrate de haber iniciado el bot.
+                    Error al guardar. Verifica tu número o asegúrate de haber iniciado el bot.
                   </p>
                 )}
               </form>
-            </div>
-          </div>
-          <GraficosLote series={seriesLote} cargando={cargandoSeries} />
-
-          {/* Pronóstico climático a 7 días (Open-Meteo) */}
-          {loteActivoId && (
-            <PronosticoLote pronostico={pronosticoLote} cargando={cargandoPronostico} />
-          )}
-
-          {/* Asistente IA sobre el lote seleccionado */}
-          {loteActivoId && seriesLote && (
-            <div className="mt-6">
-              <ChatLote
-                loteId={loteActivoId}
-                loteNombre={seriesLote.lote.nombre_lote}
-                datosLote={datosCombinadosLote}
-              />
             </div>
           )}
         </>
