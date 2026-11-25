@@ -1,6 +1,5 @@
 import os
 import json
-import time
 from typing import List, Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -277,6 +276,8 @@ class ChatLoteRequest(BaseModel):
     pregunta: str
     datos: List[Dict[str, Any]]  # Últimos 60 días (fecha, ndvi, lluvia, temp)
 
+MODELOS_CHAT = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+
 @app.post("/api/chat-lote")
 def chat_lote(req: ChatLoteRequest):
     api_key = os.getenv("GEMINI_API_KEY")
@@ -303,28 +304,18 @@ Pregunta del usuario:
 {req.pregunta}
 """
 
-    # Reintenta hasta 2 veces si Google tiene un pico de demanda (503)
-    ultimo_error = None
-    for intento in range(2):
+    for modelo in MODELOS_CHAT:
         try:
             response = client.models.generate_content(
-                model="gemini-3.8-flash",
+                model=modelo,
                 contents=prompt,
             )
             return {"respuesta": response.text}
         except Exception as e:
-            ultimo_error = e
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                time.sleep(2)
-                continue
-            break
+            print(f"Fallo con {modelo}: {e}")
+            continue
 
-    if ultimo_error and ("503" in str(ultimo_error) or "UNAVAILABLE" in str(ultimo_error)):
-        raise HTTPException(
-            status_code=503,
-            detail="El modelo de IA tiene alta demanda en este momento. Intenta de nuevo en unos segundos.",
-        )
     raise HTTPException(
-        status_code=500,
-        detail=f"Error consultando a Gemini: {str(ultimo_error)}",
+        status_code=503,
+        detail="El servicio de IA tiene alta demanda en este momento. Intenta de nuevo en unos segundos.",
     )
