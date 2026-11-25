@@ -132,3 +132,15 @@ body {
 .map-tiles-dark {
   filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
 }
+
+/* Impresión limpia (Minuta de Gestión sobre fondo blanco) */
+@media print {
+  html,
+  body {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    color-scheme: light !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+}

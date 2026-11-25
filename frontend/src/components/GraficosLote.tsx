@@ -66,7 +66,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
     const fechaLimite = new Date();
     fechaLimite.setDate(fechaLimite.getDate() - diasVentana);
     return series.satelite.filter((d) => new Date(d.fecha_imagen) >= fechaLimite);
-  }, [series?.satelite, diasVentana]);
+  }, [series, diasVentana]);
 
   // Filtrado temporal en memoria para la serie climática
   const climaFiltrado = useMemo(() => {
@@ -74,7 +74,7 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
     const fechaLimite = new Date();
     fechaLimite.setDate(fechaLimite.getDate() - diasVentana);
     return series.clima.filter((d) => new Date(d.fecha) >= fechaLimite);
-  }, [series?.clima, diasVentana]);
+  }, [series, diasVentana]);
 
   // Cálculo del promedio histórico de NDVI para la línea de referencia
   const promedioNdvi = useMemo(() => {
@@ -104,7 +104,6 @@ export default function GraficosLote({ series, cargando }: GraficosLoteProps) {
   }, [climaFiltrado]);
 
   // Exportación de la serie combinada a CSV con codificación UTF-8 BOM
-  const totalRegistros = sateliteFiltrado.length + climaFiltrado.length;
 
   const exportarCSV = () => {
     const mapaDatos: Record<

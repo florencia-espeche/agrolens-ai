@@ -1,9 +1,21 @@
 "use client";
 
+import { useState } from "react";
 import type { Feature, FeatureCollection } from "geojson";
-import { Leaf, Droplets, CloudRain, MapPin, TrendingUp, TrendingDown } from "lucide-react";
+import {
+  Leaf,
+  Droplets,
+  CloudRain,
+  MapPin,
+  TrendingUp,
+  TrendingDown,
+  ClipboardCheck,
+  Pencil,
+} from "lucide-react";
 import type { SeriesLote } from "@/components/GraficosLote";
 import type { PronosticoLoteData } from "@/components/PronosticoLote";
+import type { RecorridaCampo } from "@/components/RecorridaModal";
+import type { LoteEditable } from "@/components/GestionLotesModal";
 
 export interface AlertaResumen {
   id: number;
@@ -20,6 +32,9 @@ interface ResumenLoteActivoProps {
   cargandoSeries?: boolean;
   cargandoPronostico?: boolean;
   alertasVisibles: AlertaResumen[];
+  recorridasDelLote?: RecorridaCampo[];
+  onAbrirRecorrida?: (loteId: number, nombreLote: string) => void;
+  onEditarLote?: (lote: LoteEditable) => void;
 }
 
 function obtenerEstadoGeneral(loteId: number, alertas: AlertaResumen[]) {
@@ -88,7 +103,11 @@ export default function ResumenLoteActivo({
   cargandoSeries = false,
   cargandoPronostico = false,
   alertasVisibles,
+  recorridasDelLote = [],
+  onAbrirRecorrida,
+  onEditarLote,
 }: ResumenLoteActivoProps) {
+  const [ahoraMs] = useState(() => Date.now());
   const features: Feature[] = geojsonFiltrado?.features || [];
   if (features.length === 0) return null;
 
@@ -132,8 +151,20 @@ export default function ResumenLoteActivo({
   const lecturaVigor = interpretarNdvi(ndviActual);
   const lecturaAgua = interpretarNdwi(ndwiActual);
 
-  const fechaImagenTexto = ultimaPasada?.fecha_imagen
-    ? new Date(`${ultimaPasada.fecha_imagen.split("T")[0]}T12:00:00`).toLocaleDateString(
+  const fechaCruda =
+    ultimaPasada?.fecha_imagen ||
+    (typeof props.ultima_fecha_satelital === "string"
+      ? props.ultima_fecha_satelital
+      : null);
+
+  const nubosidadActual =
+    ultimaPasada?.nubosidad_pct ??
+    (typeof props.ultima_nubosidad_pct === "number"
+      ? props.ultima_nubosidad_pct
+      : null);
+
+  const fechaImagenTexto = fechaCruda
+    ? new Date(`${fechaCruda.split("T")[0]}T12:00:00`).toLocaleDateString(
         "es-AR",
         { day: "2-digit", month: "short" }
       )
@@ -149,6 +180,26 @@ export default function ResumenLoteActivo({
     : null;
   const balanceMm =
     lluvia7d !== null && et0Total7d !== null ? lluvia7d - et0Total7d : null;
+
+  const fechaSiembraTexto =
+    typeof props.fecha_siembra === "string" && props.fecha_siembra
+      ? new Date(`${props.fecha_siembra.split("T")[0]}T12:00:00`).toLocaleDateString(
+          "es-AR",
+          { day: "2-digit", month: "short", year: "2-digit" }
+        )
+      : null;
+
+  const diasDesdeSiembra =
+    typeof props.fecha_siembra === "string" && props.fecha_siembra
+      ? Math.max(
+          0,
+          Math.floor(
+            (ahoraMs -
+              new Date(`${props.fecha_siembra.split("T")[0]}T12:00:00`).getTime()) /
+              86400000
+          )
+        )
+      : null;
 
   return (
     <section className="space-y-3 min-w-0">
@@ -197,9 +248,44 @@ export default function ResumenLoteActivo({
               ¿Cómo está este lote hoy?
             </h3>
           </div>
-          <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${estadoGeneral.badge}`}>
-            {estadoGeneral.label}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {onAbrirRecorrida && (
+              <button
+                type="button"
+                onClick={() =>
+                  onAbrirRecorrida(idActivo, String(props.nombre_lote || `Lote ${idActivo}`))
+                }
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-200 hover:border-emerald-500/50 hover:text-emerald-300 transition"
+              >
+                <ClipboardCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Registrar recorrida</span>
+              </button>
+            )}
+            {onEditarLote && (
+              <button
+                type="button"
+                onClick={() =>
+                  onEditarLote({
+                    id: idActivo,
+                    nombre_lote: String(props.nombre_lote || `Lote ${idActivo}`),
+                    cultivo_actual: String(props.cultivo_actual || "Soja 1ra"),
+                    campana: String(props.campana || "2026/2027"),
+                    fecha_siembra:
+                      typeof props.fecha_siembra === "string" ? props.fecha_siembra : null,
+                    hectareas: props.hectareas != null ? Number(props.hectareas) : null,
+                    cliente: typeof props.cliente === "string" ? props.cliente : null,
+                  })
+                }
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-300 hover:border-slate-500 hover:text-white transition"
+              >
+                <Pencil className="w-3 h-3" />
+                <span>Editar lote</span>
+              </button>
+            )}
+            <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${estadoGeneral.badge}`}>
+              {estadoGeneral.label}
+            </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -217,6 +303,12 @@ export default function ResumenLoteActivo({
             {props.hectareas != null ? ` · ${props.hectareas} ha` : ""}
             {props.campana ? ` · Camp. ${props.campana}` : ""}
           </p>
+          {fechaSiembraTexto && (
+            <p className="text-[11px] text-slate-400 truncate">
+              Siembra: {fechaSiembraTexto}
+              {diasDesdeSiembra !== null ? ` (${diasDesdeSiembra} días)` : ""}
+            </p>
+          )}
         </div>
 
         {/* Estado de vigor (NDVI traducido) */}
@@ -252,8 +344,8 @@ export default function ResumenLoteActivo({
             {fechaImagenTexto && (
               <span>
                 · Foto {fechaImagenTexto}
-                {ultimaPasada?.nubosidad_pct != null
-                  ? ` (${Math.round(ultimaPasada.nubosidad_pct)}% nubes)`
+                {nubosidadActual != null
+                  ? ` (${Math.round(nubosidadActual)}% nubes)`
                   : ""}
               </span>
             )}
@@ -322,6 +414,46 @@ export default function ResumenLoteActivo({
           )}
         </div>
         </div>
+
+        {recorridasDelLote.length > 0 && (
+          <div className="border-t border-slate-800/80 pt-3 space-y-2">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span className="flex items-center gap-1.5 font-medium text-slate-300">
+                <ClipboardCheck className="w-3.5 h-3.5 text-emerald-400" />
+                Bitácora de recorridas ({recorridasDelLote.length})
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              {recorridasDelLote.slice(0, 3).map((rec) => (
+                <div
+                  key={rec.id}
+                  className="rounded-lg border border-slate-800 bg-slate-950/60 p-2.5 text-[11px] space-y-1"
+                >
+                  <div className="flex items-center justify-between gap-2 text-slate-400">
+                    <span>
+                      {new Date(`${rec.fecha_recorrida.split("T")[0]}T12:00:00`).toLocaleDateString(
+                        "es-AR",
+                        { day: "2-digit", month: "short" }
+                      )}
+                      {rec.autor ? ` · ${rec.autor}` : ""}
+                    </span>
+                    {rec.costo_labor_usd_ha > 0 && (
+                      <span className="font-mono text-amber-300">
+                        +USD {rec.costo_labor_usd_ha}/ha
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-200 line-clamp-2">{rec.hallazgo}</p>
+                  {rec.labor_recomendada && (
+                    <p className="text-emerald-300/90 truncate">
+                      Acción: {rec.labor_recomendada}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

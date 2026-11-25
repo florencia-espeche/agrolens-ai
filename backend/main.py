@@ -1,14 +1,20 @@
 import os
 import json
-from typing import List, Dict, Any
+from datetime import date
+from typing import List, Dict, Any, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import requests
 from google import genai
+
+try:
+    from backend import agro_services
+except ImportError:
+    import agro_services
 
 load_dotenv()
 
@@ -32,20 +38,122 @@ app.add_middleware(
 )
 
 def get_db_connection():
-    return psycopg2.connect(os.getenv("DATABASE_URL"), cursor_factory=RealDictCursor)
+    conn = psycopg2.connect(os.getenv("DATABASE_URL"), cursor_factory=RealDictCursor)
+    agro_services.ensure_schema(conn)
+    return conn
+
 
 class EstadoAlertaUpdate(BaseModel):
     estado: str  # 'PENDIENTE', 'EN_REVISION', 'RESUELTA'
+
+
+class ArchivoPoligonoRequest(BaseModel):
+    nombre_archivo: str
+    contenido_texto: Optional[str] = None
+    contenido_base64: Optional[str] = None
+
+
+class NuevoClientePayload(BaseModel):
+    nombre_razon_social: str
+    email_contacto: Optional[str] = None
+    zona_productiva: Optional[str] = None
+
+
+class LoteCreateRequest(BaseModel):
+    nombre_lote: str
+    cultivo_actual: str
+    campana: str = "2026/2027"
+    fecha_siembra: Optional[str] = None
+    cliente_id: Optional[int] = None
+    nuevo_cliente: Optional[NuevoClientePayload] = None
+    geometry: Dict[str, Any]
+
+
+class LoteUpdateRequest(BaseModel):
+    nombre_lote: Optional[str] = None
+    cultivo_actual: Optional[str] = None
+    campana: Optional[str] = None
+    fecha_siembra: Optional[str] = None
+
+
+class RecorridaCreateRequest(BaseModel):
+    lote_id: int
+    alerta_id: Optional[int] = None
+    fecha_recorrida: Optional[str] = None
+    autor: Optional[str] = None
+    hallazgo: str
+    labor_recomendada: Optional[str] = None
+    costo_labor_usd_ha: float = Field(default=0.0, ge=0.0)
+    nuevo_estado_alerta: Optional[str] = None
+
+
+class ConfigEconomicaUpdate(BaseModel):
+    ambito: str = "todos::todas"
+    supuestos_cultivo: Dict[str, Any] = Field(default_factory=dict)
+    es_campo_alquilado: bool = False
+    arriendo_qq_soja: float = Field(default=12.0, ge=0.0)
+    escenario: str = "base"
+
+
+class PresupuestoLoteUpdate(BaseModel):
+    rinde_objetivo_qq_ha: Optional[float] = Field(default=None, ge=0.0)
+    costo_extra_usd_ha: float = Field(default=0.0, ge=0.0)
+    notas_presupuesto: Optional[str] = None
+
+
+def _validar_fecha_iso(valor: Optional[str]) -> Optional[date]:
+    if valor is None or not valor.strip():
+        return None
+    try:
+        return date.fromisoformat(valor.strip())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Formato de fecha inválido. Use YYYY-MM-DD.",
+        ) from exc
+
 
 @app.get("/")
 def health_check():
     return {"status": "ok", "service": "AgroLens AI API"}
 
+
+@app.get("/api/clientes")
+def listar_clientes():
+    """Devuelve los establecimientos / clientes registrados para vincular lotes nuevos."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT id, nombre_razon_social, email_contacto, zona_productiva
+            FROM clientes
+            ORDER BY nombre_razon_social ASC;
+        """)
+        return cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/lotes/parsear-archivo")
+def parsear_archivo_poligonos(req: ArchivoPoligonoRequest):
+    """Extrae polígonos desde KML, KMZ o GeoJSON para previsualización antes de guardar."""
+    try:
+        poligonos = agro_services.parsear_geometrias_archivo(
+            nombre_archivo=req.nombre_archivo,
+            contenido_texto=req.contenido_texto,
+            contenido_base64=req.contenido_base64,
+        )
+        return {"poligonos": poligonos}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/lotes")
 def obtener_lotes_geojson():
     """
-    Devuelve los lotes en formato GeoJSON FeatureCollection con su último NDVI
-    y la severidad de alerta más alta pendiente (listo para Leaflet/Mapbox).
+    Devuelve los lotes en formato GeoJSON FeatureCollection con su último NDVI,
+    metadatos fenológicos/económicos y severidad de alerta activa.
     """
     conn = get_db_connection()
     cur = conn.cursor()
@@ -53,23 +161,24 @@ def obtener_lotes_geojson():
         cur.execute("""
             SELECT 
                 l.id,
+                l.cliente_id,
                 l.nombre_lote,
                 l.cultivo_actual,
                 l.campana,
                 l.hectareas,
+                l.fecha_siembra::text AS fecha_siembra,
                 c.nombre_razon_social AS cliente,
                 c.zona_productiva,
                 ST_AsGeoJSON(l.geom) AS geojson,
-                (
-                    SELECT ndvi_mediana FROM indices_satelitales s
-                    WHERE s.lote_id = l.id
-                    ORDER BY s.fecha_imagen DESC LIMIT 1
-                ) AS ultimo_ndvi,
-                (
-                    SELECT ndwi_mediana FROM indices_satelitales s
-                    WHERE s.lote_id = l.id
-                    ORDER BY s.fecha_imagen DESC LIMIT 1
-                ) AS ultimo_ndwi,
+                ult.ndvi_mediana AS ultimo_ndvi,
+                ult.ndwi_mediana AS ultimo_ndwi,
+                ult.fecha_imagen::text AS ultima_fecha_satelital,
+                ult.nubosidad_pct AS ultima_nubosidad_pct,
+                pl.rinde_objetivo_qq_ha AS rinde_objetivo_lote_qq_ha,
+                pl.costo_extra_usd_ha AS costo_extra_usd_ha,
+                pl.notas_presupuesto AS notas_presupuesto,
+                COALESCE(rec.costo_labores_usd_ha, 0) AS costo_labores_recorrida_usd_ha,
+                COALESCE(rec.total_recorridas, 0) AS total_recorridas,
                 (
                     SELECT nivel_severidad FROM alertas_ia a
                     WHERE a.lote_id = l.id AND a.estado != 'RESUELTA'
@@ -82,6 +191,21 @@ def obtener_lotes_geojson():
                 ) AS alerta_activa
             FROM lotes l
             JOIN clientes c ON l.cliente_id = c.id
+            LEFT JOIN presupuestos_lote pl ON pl.lote_id = l.id
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(SUM(r.costo_labor_usd_ha), 0) AS costo_labores_usd_ha,
+                    COUNT(*) AS total_recorridas
+                FROM recorridas_campo r
+                WHERE r.lote_id = l.id
+            ) rec ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT ndvi_mediana, ndwi_mediana, fecha_imagen, nubosidad_pct
+                FROM indices_satelitales s
+                WHERE s.lote_id = l.id
+                ORDER BY s.fecha_imagen DESC
+                LIMIT 1
+            ) ult ON TRUE
             ORDER BY l.id ASC;
         """)
         rows = cur.fetchall()
@@ -89,12 +213,18 @@ def obtener_lotes_geojson():
         features = []
         for row in rows:
             geom = json.loads(row.pop("geojson"))
-            if row["hectareas"] is not None:
-                row["hectareas"] = float(row["hectareas"])
-            if row["ultimo_ndvi"] is not None:
-                row["ultimo_ndvi"] = float(row["ultimo_ndvi"])
-            if row["ultimo_ndwi"] is not None:
-                row["ultimo_ndwi"] = float(row["ultimo_ndwi"])
+            for num_col in (
+                "hectareas",
+                "ultimo_ndvi",
+                "ultimo_ndwi",
+                "ultima_nubosidad_pct",
+                "rinde_objetivo_lote_qq_ha",
+                "costo_extra_usd_ha",
+                "costo_labores_recorrida_usd_ha",
+            ):
+                if row.get(num_col) is not None:
+                    row[num_col] = float(row[num_col])
+            row["total_recorridas"] = int(row.get("total_recorridas") or 0)
 
             features.append({
                 "type": "Feature",
@@ -103,6 +233,447 @@ def obtener_lotes_geojson():
             })
 
         return {"type": "FeatureCollection", "features": features}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/lotes", status_code=201)
+def crear_lote(req: LoteCreateRequest):
+    """
+    Crea un lote (y opcionalmente su establecimiento), calcula hectáreas en PostGIS,
+    precarga el historial climático de NASA POWER y dispara opcionalmente el ETL satelital.
+    """
+    nombre_lote = req.nombre_lote.strip()
+    cultivo = req.cultivo_actual.strip()
+    campana = req.campana.strip() or "2026/2027"
+    if not nombre_lote or not cultivo:
+        raise HTTPException(status_code=400, detail="Nombre del lote y cultivo son obligatorios.")
+
+    fecha_siembra = _validar_fecha_iso(req.fecha_siembra)
+
+    try:
+        geom_norm = agro_services.normalizar_poligono_geojson(req.geometry)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cliente_id = req.cliente_id
+        if cliente_id is None:
+            if not req.nuevo_cliente or not req.nuevo_cliente.nombre_razon_social.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Debe seleccionar un establecimiento existente o indicar uno nuevo.",
+                )
+            razon = req.nuevo_cliente.nombre_razon_social.strip()
+            email = (
+                req.nuevo_cliente.email_contacto.strip()
+                if req.nuevo_cliente.email_contacto and req.nuevo_cliente.email_contacto.strip()
+                else agro_services.slug_email_establecimiento(razon)
+            )
+            zona = (req.nuevo_cliente.zona_productiva or "").strip() or "Argentina"
+            cur.execute(
+                """
+                INSERT INTO clientes (nombre_razon_social, email_contacto, zona_productiva)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (email_contacto) DO UPDATE SET
+                    nombre_razon_social = EXCLUDED.nombre_razon_social,
+                    zona_productiva = EXCLUDED.zona_productiva
+                RETURNING id;
+                """,
+                (razon, email, zona),
+            )
+            cliente_id = cur.fetchone()["id"]
+        else:
+            cur.execute("SELECT id FROM clientes WHERE id = %s;", (cliente_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Establecimiento no encontrado.")
+
+        geom_json = json.dumps(geom_norm)
+        cur.execute(
+            """
+            WITH pol AS (
+                SELECT
+                    CASE
+                        WHEN ST_GeometryType(raw_g) = 'ST_Polygon' THEN raw_g
+                        ELSE (
+                            SELECT d.geom
+                            FROM ST_Dump(ST_CollectionExtract(raw_g, 3)) AS d
+                            ORDER BY ST_Area(d.geom::geography) DESC
+                            LIMIT 1
+                        )
+                    END AS geom
+                FROM (
+                    SELECT ST_Force2D(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326))) AS raw_g
+                ) sub
+            )
+            INSERT INTO lotes (cliente_id, nombre_lote, cultivo_actual, campana, hectareas, fecha_siembra, geom)
+            SELECT
+                %s,
+                %s,
+                %s,
+                %s,
+                ROUND((ST_Area(pol.geom::geography) / 10000.0)::numeric, 2),
+                %s,
+                pol.geom
+            FROM pol
+            WHERE pol.geom IS NOT NULL
+            RETURNING
+                id,
+                nombre_lote,
+                hectareas,
+                ST_Y(ST_Centroid(geom)) AS lat,
+                ST_X(ST_Centroid(geom)) AS lon;
+            """,
+            (geom_json, cliente_id, nombre_lote, cultivo, campana, fecha_siembra),
+        )
+        creado = cur.fetchone()
+        if not creado:
+            raise HTTPException(status_code=400, detail="No se pudo construir un polígono geográfico válido.")
+        conn.commit()
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creando lote: {exc}") from exc
+    finally:
+        cur.close()
+
+    try:
+        clima_dias = agro_services.ingestar_clima_nasa_power(
+            conn,
+            creado["id"],
+            float(creado["lat"]),
+            float(creado["lon"]),
+            dias=60,
+        )
+    finally:
+        conn.close()
+
+    satelite_disparado = agro_services.disparar_etl_satelital_github()
+
+    return {
+        "id": creado["id"],
+        "nombre_lote": creado["nombre_lote"],
+        "hectareas": float(creado["hectareas"] or 0),
+        "clima_dias_ingestados": clima_dias,
+        "satelite_workflow_disparado": satelite_disparado,
+    }
+
+
+@app.patch("/api/lotes/{lote_id}")
+def actualizar_lote(lote_id: int, body: LoteUpdateRequest):
+    """Permite editar nombre, cultivo, campaña o fecha de siembra de un lote existente."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT id, nombre_lote, cultivo_actual, campana, fecha_siembra FROM lotes WHERE id = %s;",
+            (lote_id,),
+        )
+        actual = cur.fetchone()
+        if not actual:
+            raise HTTPException(status_code=404, detail="Lote no encontrado.")
+
+        nombre = body.nombre_lote.strip() if body.nombre_lote is not None else actual["nombre_lote"]
+        cultivo = body.cultivo_actual.strip() if body.cultivo_actual is not None else actual["cultivo_actual"]
+        campana = body.campana.strip() if body.campana is not None else actual["campana"]
+
+        if not nombre or not cultivo:
+            raise HTTPException(status_code=400, detail="Nombre del lote y cultivo no pueden quedar vacíos.")
+
+        if body.fecha_siembra is not None:
+            fecha_siembra = _validar_fecha_iso(body.fecha_siembra)
+        else:
+            fecha_siembra = actual["fecha_siembra"]
+
+        cur.execute(
+            """
+            UPDATE lotes
+            SET nombre_lote = %s,
+                cultivo_actual = %s,
+                campana = %s,
+                fecha_siembra = %s
+            WHERE id = %s
+            RETURNING id, nombre_lote, cultivo_actual, campana, fecha_siembra::text AS fecha_siembra;
+            """,
+            (nombre, cultivo, campana, fecha_siembra, lote_id),
+        )
+        actualizado = cur.fetchone()
+        conn.commit()
+        return actualizado
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.delete("/api/lotes/{lote_id}")
+def eliminar_lote(lote_id: int):
+    """Elimina un lote y sus series asociadas (cascada configurada en esquema)."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM lotes WHERE id = %s RETURNING id, nombre_lote;", (lote_id,))
+        borrado = cur.fetchone()
+        if not borrado:
+            raise HTTPException(status_code=404, detail="Lote no encontrado.")
+        conn.commit()
+        return {"status": "deleted", **borrado}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/recorridas")
+def listar_recorridas(lote_id: Optional[int] = Query(None), limit: int = Query(50, ge=1, le=200)):
+    """Devuelve la bitácora de recorridas a campo (opcionalmente filtrada por lote)."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        query = """
+            SELECT
+                r.id,
+                r.lote_id,
+                l.nombre_lote,
+                r.alerta_id,
+                a.tipo_anomalia AS alerta_tipo,
+                r.fecha_recorrida::text AS fecha_recorrida,
+                r.autor,
+                r.hallazgo,
+                r.labor_recomendada,
+                r.costo_labor_usd_ha,
+                r.creado_en
+            FROM recorridas_campo r
+            JOIN lotes l ON r.lote_id = l.id
+            LEFT JOIN alertas_ia a ON r.alerta_id = a.id
+        """
+        params: list[Any] = []
+        if lote_id is not None:
+            query += " WHERE r.lote_id = %s"
+            params.append(lote_id)
+        query += " ORDER BY r.fecha_recorrida DESC, r.id DESC LIMIT %s;"
+        params.append(limit)
+
+        cur.execute(query, params)
+        rows = cur.fetchall()
+        for row in rows:
+            if row.get("costo_labor_usd_ha") is not None:
+                row["costo_labor_usd_ha"] = float(row["costo_labor_usd_ha"])
+        return rows
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.post("/api/recorridas", status_code=201)
+def registrar_recorrida(req: RecorridaCreateRequest):
+    """
+    Registra una nota de recorrida a campo y, si se indica una alerta y estado nuevo,
+    actualiza dicha alerta dentro de la misma transacción.
+    """
+    hallazgo = req.hallazgo.strip()
+    if not hallazgo:
+        raise HTTPException(status_code=400, detail="El hallazgo de la recorrida es obligatorio.")
+
+    fecha_rec = _validar_fecha_iso(req.fecha_recorrida) or date.today()
+    estado_alerta = None
+    if req.nuevo_estado_alerta:
+        estado_alerta = req.nuevo_estado_alerta.upper().strip()
+        if estado_alerta not in ("PENDIENTE", "EN_REVISION", "RESUELTA"):
+            raise HTTPException(
+                status_code=400,
+                detail="Estado de alerta inválido. Use PENDIENTE, EN_REVISION o RESUELTA.",
+            )
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id FROM lotes WHERE id = %s;", (req.lote_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Lote no encontrado.")
+
+        cur.execute(
+            """
+            INSERT INTO recorridas_campo
+                (lote_id, alerta_id, fecha_recorrida, autor, hallazgo, labor_recomendada, costo_labor_usd_ha)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING
+                id, lote_id, alerta_id, fecha_recorrida::text AS fecha_recorrida,
+                autor, hallazgo, labor_recomendada, costo_labor_usd_ha, creado_en;
+            """,
+            (
+                req.lote_id,
+                req.alerta_id,
+                fecha_rec,
+                (req.autor or "").strip() or None,
+                hallazgo,
+                (req.labor_recomendada or "").strip() or None,
+                req.costo_labor_usd_ha,
+            ),
+        )
+        recorrida = cur.fetchone()
+        if recorrida.get("costo_labor_usd_ha") is not None:
+            recorrida["costo_labor_usd_ha"] = float(recorrida["costo_labor_usd_ha"])
+
+        alerta_actualizada = None
+        if req.alerta_id is not None and estado_alerta is not None:
+            cur.execute(
+                """
+                UPDATE alertas_ia
+                SET estado = %s
+                WHERE id = %s AND lote_id = %s
+                RETURNING id, lote_id, estado;
+                """,
+                (estado_alerta, req.alerta_id, req.lote_id),
+            )
+            alerta_actualizada = cur.fetchone()
+
+        conn.commit()
+        return {"recorrida": recorrida, "alerta_actualizada": alerta_actualizada}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error registrando recorrida: {exc}") from exc
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/economia/configuracion")
+def obtener_configuracion_economica(ambito: str = Query("todos::todas")):
+    """Obtiene supuestos económicos persistidos para un ámbito cartera/cliente y presupuestos por lote."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT clave_ambito, supuestos_cultivo, es_campo_alquilado, arriendo_qq_soja, escenario, actualizado_en
+            FROM configuracion_economica_cartera
+            WHERE clave_ambito = %s
+            LIMIT 1;
+            """,
+            (ambito,),
+        )
+        config = cur.fetchone()
+        if config and config.get("arriendo_qq_soja") is not None:
+            config["arriendo_qq_soja"] = float(config["arriendo_qq_soja"])
+
+        cur.execute(
+            """
+            SELECT lote_id, rinde_objetivo_qq_ha, costo_extra_usd_ha, notas_presupuesto
+            FROM presupuestos_lote;
+            """
+        )
+        presupuestos = {}
+        for row in cur.fetchall():
+            presupuestos[str(row["lote_id"])] = {
+                "rinde_objetivo_qq_ha": (
+                    float(row["rinde_objetivo_qq_ha"])
+                    if row["rinde_objetivo_qq_ha"] is not None
+                    else None
+                ),
+                "costo_extra_usd_ha": float(row["costo_extra_usd_ha"] or 0),
+                "notas_presupuesto": row["notas_presupuesto"],
+            }
+
+        return {"configuracion": config, "presupuestos_lote": presupuestos}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.put("/api/economia/configuracion")
+def guardar_configuracion_economica(body: ConfigEconomicaUpdate):
+    """Guarda los supuestos económicos, arriendo y escenario para un ámbito en PostgreSQL."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO configuracion_economica_cartera
+                (clave_ambito, supuestos_cultivo, es_campo_alquilado, arriendo_qq_soja, escenario, actualizado_en)
+            VALUES (%s, %s::jsonb, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (clave_ambito) DO UPDATE SET
+                supuestos_cultivo = EXCLUDED.supuestos_cultivo,
+                es_campo_alquilado = EXCLUDED.es_campo_alquilado,
+                arriendo_qq_soja = EXCLUDED.arriendo_qq_soja,
+                escenario = EXCLUDED.escenario,
+                actualizado_en = CURRENT_TIMESTAMP
+            RETURNING clave_ambito, supuestos_cultivo, es_campo_alquilado, arriendo_qq_soja, escenario;
+            """,
+            (
+                body.ambito,
+                json.dumps(body.supuestos_cultivo),
+                body.es_campo_alquilado,
+                body.arriendo_qq_soja,
+                body.escenario,
+            ),
+        )
+        saved = cur.fetchone()
+        conn.commit()
+        if saved.get("arriendo_qq_soja") is not None:
+            saved["arriendo_qq_soja"] = float(saved["arriendo_qq_soja"])
+        return saved
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error guardando configuración económica: {exc}") from exc
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.put("/api/economia/lotes/{lote_id}")
+def guardar_presupuesto_lote(lote_id: int, body: PresupuestoLoteUpdate):
+    """Guarda rinde objetivo individual y costos extra ejecutados para un lote específico."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id FROM lotes WHERE id = %s;", (lote_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Lote no encontrado.")
+
+        cur.execute(
+            """
+            INSERT INTO presupuestos_lote
+                (lote_id, rinde_objetivo_qq_ha, costo_extra_usd_ha, notas_presupuesto, actualizado_en)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (lote_id) DO UPDATE SET
+                rinde_objetivo_qq_ha = EXCLUDED.rinde_objetivo_qq_ha,
+                costo_extra_usd_ha = EXCLUDED.costo_extra_usd_ha,
+                notas_presupuesto = EXCLUDED.notas_presupuesto,
+                actualizado_en = CURRENT_TIMESTAMP
+            RETURNING lote_id, rinde_objetivo_qq_ha, costo_extra_usd_ha, notas_presupuesto;
+            """,
+            (
+                lote_id,
+                body.rinde_objetivo_qq_ha,
+                body.costo_extra_usd_ha,
+                (body.notas_presupuesto or "").strip() or None,
+            ),
+        )
+        saved = cur.fetchone()
+        conn.commit()
+        return {
+            "lote_id": saved["lote_id"],
+            "rinde_objetivo_qq_ha": (
+                float(saved["rinde_objetivo_qq_ha"])
+                if saved["rinde_objetivo_qq_ha"] is not None
+                else None
+            ),
+            "costo_extra_usd_ha": float(saved["costo_extra_usd_ha"] or 0),
+            "notas_presupuesto": saved["notas_presupuesto"],
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error guardando presupuesto del lote: {exc}") from exc
     finally:
         cur.close()
         conn.close()
@@ -229,7 +800,7 @@ def obtener_pronostico_lote(lote_id: int, dias: int = Query(7, ge=1, le=14)):
         )
 
 @app.get("/api/alertas")
-def obtener_alertas(estado: str | None = Query(None, description="Filtrar por PENDIENTE, EN_REVISION o RESUELTA")):
+def obtener_alertas(estado: Optional[str] = Query(None, description="Filtrar por PENDIENTE, EN_REVISION o RESUELTA")):
     """Devuelve el feed de alertas generadas por IA para el panel de triage."""
     conn = get_db_connection()
     cur = conn.cursor()
@@ -360,6 +931,7 @@ class ChatLoteRequest(BaseModel):
     lote_nombre: str
     pregunta: str
     datos: List[Dict[str, Any]]  # Últimos 60 días (fecha, ndvi, lluvia, temp)
+    recorridas: List[Dict[str, Any]] = Field(default_factory=list)
 
 MODELOS_CHAT = ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
 
@@ -373,17 +945,21 @@ def chat_lote(req: ChatLoteRequest):
 
     # Limita a los últimos 60 registros para mantener el contexto liviano y rápido
     contexto_json = json.dumps(req.datos[-60:], ensure_ascii=False)
+    recorridas_json = json.dumps(req.recorridas[-15:], ensure_ascii=False)
 
     prompt = f"""
 Eres el asistente agronómico de AgroLens AI. Responde la pregunta del usuario sobre el lote "{req.lote_nombre}" basándote EXCLUSIVAMENTE en los datos reales provistos abajo.
 
 Reglas:
-- Cita fechas exactas y valores concretos (NDVI, mm de lluvia, °C) cuando correspondan.
+- Cita fechas exactas y valores concretos (NDVI, mm de lluvia, °C) o hallazgos de recorridas cuando correspondan.
 - Sé conciso y claro (máximo 4 o 5 líneas).
 - Si los datos no alcanzan para responder algo, dilo con honestidad sin inventar cifras.
 
 Datos históricos del lote (JSON):
 {contexto_json}
+
+Bitácora de recorridas a campo registradas (JSON):
+{recorridas_json}
 
 Pregunta del usuario:
 {req.pregunta}

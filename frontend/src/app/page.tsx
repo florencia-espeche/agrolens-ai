@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import type { FeatureCollection } from "geojson";
 import {
@@ -12,13 +12,34 @@ import {
   Activity,
   DollarSign,
   Sparkles,
+  Plus,
+  ClipboardCheck,
+  X,
 } from "lucide-react";
 import GraficosLote, { type SeriesLote } from "@/components/GraficosLote";
-import ChatLote from "@/components/ChatLote";
+import ChatLote, { type DatoCombinadoLote } from "@/components/ChatLote";
 import PronosticoLote, { type PronosticoLoteData } from "@/components/PronosticoLote";
 import KpisGerenciales from "@/components/KpisGerenciales";
 import ModuloEconomico from "@/components/ModuloEconomico";
 import ResumenLoteActivo from "@/components/ResumenLoteActivo";
+import MinutaGestionModal from "@/components/MinutaGestionModal";
+import GestionLotesModal, {
+  type ClienteDisponible,
+  type LoteEditable,
+  type ResultadoAltaLote,
+} from "@/components/GestionLotesModal";
+import RecorridaModal, {
+  type ContextoRecorrida,
+  type RecorridaCampo,
+} from "@/components/RecorridaModal";
+import {
+  ESCENARIOS,
+  SUPUESTOS_DEFAULT,
+  calcularCarteraEconomica,
+  type EscenarioId,
+  type PresupuestoLote,
+  type SupuestoCultivo,
+} from "@/lib/economia";
 
 // Leaflet requiere `window`, por eso se importa sin SSR
 const MapaLotes = dynamic(() => import("@/components/MapaLotes"), {
@@ -38,10 +59,56 @@ interface Alerta {
   cliente?: string;
   zona_productiva: string;
   fecha_deteccion: string;
+  fecha?: string;
+  created_at?: string;
   nivel_severidad: string;
   tipo_anomalia: string;
   diagnostico_llm: string;
+  mensaje?: string;
+  diagnostico?: string;
   estado: string;
+}
+
+const STORAGE_ECONOMIA_KEY = "agrolens:economia:v1";
+
+interface PreferenciasEconomicas {
+  supuestos: Record<string, SupuestoCultivo>;
+  esCampoAlquilado: boolean;
+  arriendoQqSoja: number;
+  escenario: EscenarioId;
+}
+
+function leerPreferenciasEconomicas(): PreferenciasEconomicas {
+  const fallback: PreferenciasEconomicas = {
+    supuestos: { ...SUPUESTOS_DEFAULT },
+    esCampoAlquilado: false,
+    arriendoQqSoja: 12,
+    escenario: "base",
+  };
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_ECONOMIA_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<PreferenciasEconomicas>;
+    const escenarioValido =
+      parsed.escenario && parsed.escenario in ESCENARIOS
+        ? parsed.escenario
+        : "base";
+    return {
+      supuestos:
+        parsed.supuestos && typeof parsed.supuestos === "object"
+          ? { ...SUPUESTOS_DEFAULT, ...parsed.supuestos }
+          : fallback.supuestos,
+      esCampoAlquilado: Boolean(parsed.esCampoAlquilado),
+      arriendoQqSoja:
+        typeof parsed.arriendoQqSoja === "number" && parsed.arriendoQqSoja >= 0
+          ? parsed.arriendoQqSoja
+          : fallback.arriendoQqSoja,
+      escenario: escenarioValido,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 interface DiagnosticoEstructurado {
@@ -81,6 +148,122 @@ export default function Home() {
   const [pronosticoLote, setPronosticoLote] = useState<PronosticoLoteData | null>(null);
   const [cargandoPronostico, setCargandoPronostico] = useState(false);
   const [tabDetalle, setTabDetalle] = useState<"campo" | "economia" | "asistente">("campo");
+  const [actualizandoAlertaId, setActualizandoAlertaId] = useState<number | null>(null);
+  const [errorAlerta, setErrorAlerta] = useState<string | null>(null);
+  const [clientesLista, setClientesLista] = useState<ClienteDisponible[]>([]);
+  const [recorridas, setRecorridas] = useState<RecorridaCampo[]>([]);
+  const [presupuestosLote, setPresupuestosLote] = useState<Record<string, PresupuestoLote>>({});
+  const [sincronizandoEconomia, setSincronizandoEconomia] = useState(false);
+  const [errorSyncEconomia, setErrorSyncEconomia] = useState<string | null>(null);
+
+  const [modalLoteAbierto, setModalLoteAbierto] = useState(false);
+  const [loteParaEditar, setLoteParaEditar] = useState<LoteEditable | null>(null);
+  const [modalLoteNonce, setModalLoteNonce] = useState(0);
+  const [contextoRecorrida, setContextoRecorrida] = useState<ContextoRecorrida | null>(null);
+  const [recorridaNonce, setRecorridaNonce] = useState(0);
+  const [avisoOperativo, setAvisoOperativo] = useState<string | null>(null);
+
+  // Estados compartidos del Módulo Económico y Minuta de Gestión (persistidos en BD + localStorage)
+  const [supuestos, setSupuestos] = useState<Record<string, SupuestoCultivo>>(
+    () => leerPreferenciasEconomicas().supuestos
+  );
+  const [esCampoAlquilado, setEsCampoAlquilado] = useState<boolean>(
+    () => leerPreferenciasEconomicas().esCampoAlquilado
+  );
+  const [arriendoQqSoja, setArriendoQqSoja] = useState<number>(
+    () => leerPreferenciasEconomicas().arriendoQqSoja
+  );
+  const [escenario, setEscenario] = useState<EscenarioId>(
+    () => leerPreferenciasEconomicas().escenario
+  );
+  const [mostrarMinuta, setMostrarMinuta] = useState(false);
+  const seccionDetalleRef = useRef<HTMLDivElement | null>(null);
+  const mapaRef = useRef<HTMLElement | null>(null);
+  const timerGuardadoEcoRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const ambitoEconomico = `${filtroCliente}::${filtroCampana}`;
+
+  const programarGuardadoEconomia = (
+    nextPrefs: PreferenciasEconomicas,
+    ambitoDestino: string
+  ) => {
+    if (timerGuardadoEcoRef.current) {
+      clearTimeout(timerGuardadoEcoRef.current);
+    }
+    setSincronizandoEconomia(true);
+    timerGuardadoEcoRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/economia/configuracion`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ambito: ambitoDestino,
+            supuestos_cultivo: nextPrefs.supuestos,
+            es_campo_alquilado: nextPrefs.esCampoAlquilado,
+            arriendo_qq_soja: nextPrefs.arriendoQqSoja,
+            escenario: nextPrefs.escenario,
+          }),
+        });
+        if (!res.ok) throw new Error();
+        setErrorSyncEconomia(null);
+      } catch {
+        setErrorSyncEconomia("No se pudo sincronizar con la base de datos.");
+      } finally {
+        setSincronizandoEconomia(false);
+      }
+    }, 450);
+  };
+
+  const handleChangeSupuestos = (
+    updater:
+      | Record<string, SupuestoCultivo>
+      | ((prev: Record<string, SupuestoCultivo>) => Record<string, SupuestoCultivo>)
+  ) => {
+    const next = typeof updater === "function" ? updater(supuestos) : updater;
+    setSupuestos(next);
+    programarGuardadoEconomia(
+      { supuestos: next, esCampoAlquilado, arriendoQqSoja, escenario },
+      ambitoEconomico
+    );
+  };
+
+  const handleChangeCampoAlquilado = (val: boolean) => {
+    setEsCampoAlquilado(val);
+    programarGuardadoEconomia(
+      { supuestos, esCampoAlquilado: val, arriendoQqSoja, escenario },
+      ambitoEconomico
+    );
+  };
+
+  const handleChangeArriendoQqSoja = (val: number) => {
+    setArriendoQqSoja(val);
+    programarGuardadoEconomia(
+      { supuestos, esCampoAlquilado, arriendoQqSoja: val, escenario },
+      ambitoEconomico
+    );
+  };
+
+  const handleChangeEscenario = (val: EscenarioId) => {
+    setEscenario(val);
+    programarGuardadoEconomia(
+      { supuestos, esCampoAlquilado, arriendoQqSoja, escenario: val },
+      ambitoEconomico
+    );
+  };
+
+  useEffect(() => {
+    try {
+      const payload: PreferenciasEconomicas = {
+        supuestos,
+        esCampoAlquilado,
+        arriendoQqSoja,
+        escenario,
+      };
+      window.localStorage.setItem(STORAGE_ECONOMIA_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignora fallos de almacenamiento privado o cuota excedida
+    }
+  }, [supuestos, esCampoAlquilado, arriendoQqSoja, escenario]);
 
   // Estados para la suscripción al Bot de Telegram
   const [chatId, setChatId] = useState("");
@@ -141,10 +324,68 @@ export default function Home() {
     return sigueVisible ? loteSeleccionado : Number(features[0].properties?.id);
   }, [geojsonFiltrado, loteSeleccionado]);
 
+  // Recorridas visibles para cartera y para el lote seleccionado
+  const recorridasContexto = useMemo(() => {
+    if (!geojsonFiltrado) return recorridas;
+    if (filtroCliente === "todos" && filtroCampana === "todas") return recorridas;
+    const idsVisibles = new Set(
+      geojsonFiltrado.features.map((f) => Number(f.properties?.id))
+    );
+    return recorridas.filter((r) => idsVisibles.has(r.lote_id));
+  }, [recorridas, geojsonFiltrado, filtroCliente, filtroCampana]);
+
+  const recorridasLoteActivo = useMemo(() => {
+    if (!loteActivoId) return [];
+    return recorridas.filter((r) => r.lote_id === loteActivoId);
+  }, [recorridas, loteActivoId]);
+
+  // Cartera económica compartida entre KPIs superiores, Módulo Económico y Minuta
+  const carteraEconomica = useMemo(
+    () =>
+      calcularCarteraEconomica({
+        geojsonFiltrado,
+        alertasVisibles: alertasContexto,
+        supuestos,
+        esCampoAlquilado,
+        arriendoQqSoja,
+        escenario,
+        presupuestosPorLote: presupuestosLote,
+      }),
+    [
+      geojsonFiltrado,
+      alertasContexto,
+      supuestos,
+      esCampoAlquilado,
+      arriendoQqSoja,
+      escenario,
+      presupuestosLote,
+    ]
+  );
+
+  const abrirEconomia = () => {
+    setTabDetalle("economia");
+    requestAnimationFrame(() => {
+      seccionDetalleRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  };
+
+  const verLoteEnMapa = (id: number) => {
+    seleccionarLoteConZoom(id);
+    requestAnimationFrame(() => {
+      mapaRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  };
+
   // Combina series satelitales y climáticas para el contexto del Asistente IA
   const datosCombinadosLote = useMemo(() => {
     if (!seriesLote) return [];
-    const mapa: Record<string, any> = {};
+    const mapa: Record<string, DatoCombinadoLote> = {};
 
     (seriesLote.clima || []).forEach((c) => {
       const f = c.fecha ? c.fecha.split("T")[0] : "";
@@ -190,10 +431,7 @@ export default function Home() {
   }, [alertasContexto]);
 
   useEffect(() => {
-    if (!cargando) {
-      setIsSlowLoad(false);
-      return;
-    }
+    if (!cargando) return;
     const timer = setTimeout(() => setIsSlowLoad(true), 4000);
     return () => clearTimeout(timer);
   }, [cargando]);
@@ -201,11 +439,14 @@ export default function Home() {
   // Calcula la fecha más reciente disponible de las alertas o imágenes satelitales
   const ultimaFecha = useMemo(() => {
     const fechasAlertas = alertas
-      .map((a) => a.fecha_deteccion || (a as any).fecha || (a as any).created_at)
-      .filter(Boolean);
+      .map((a) => a.fecha_deteccion || a.fecha || a.created_at)
+      .filter((v): v is string => Boolean(v));
 
     const fechasLotes = (geojson?.features || [])
-      .map((f: any) => f.properties?.ultima_fecha_satelital)
+      .map((f) => {
+        const raw = f.properties?.ultima_fecha_satelital;
+        return typeof raw === "string" ? raw : "";
+      })
       .filter(Boolean);
 
     const fechas = [...fechasAlertas, ...fechasLotes].sort().reverse();
@@ -223,29 +464,135 @@ export default function Home() {
     });
   }, [alertas, geojson]);
 
-  const cargarDatos = async () => {
+  const recargarDatos = async () => {
     try {
-      const [resLotes, resAlertas] = await Promise.all([
+      const [resLotes, resAlertas, resClientes, resRecorridas] = await Promise.all([
         fetch(`${API_URL}/api/lotes`),
         fetch(`${API_URL}/api/alertas`),
+        fetch(`${API_URL}/api/clientes`),
+        fetch(`${API_URL}/api/recorridas`),
       ]);
-      const dataLotes = await resLotes.json();
-      const dataAlertas = await resAlertas.json();
+      const dataLotes = (await resLotes.json()) as FeatureCollection;
+      const dataAlertas = (await resAlertas.json()) as Alerta[];
       setGeojson(dataLotes);
-      if (dataLotes.features?.length > 0) {
-        setLoteSeleccionado((prev) => prev ?? dataLotes.features[0].properties.id);
-      }
       setAlertas(dataAlertas);
+      if (resClientes.ok) {
+        setClientesLista((await resClientes.json()) as ClienteDisponible[]);
+      }
+      if (resRecorridas.ok) {
+        setRecorridas((await resRecorridas.json()) as RecorridaCampo[]);
+      }
     } catch (err) {
-      console.error("Error conectando con FastAPI:", err);
-    } finally {
-      setCargando(false);
+      console.error("Error recargando datos de FastAPI:", err);
     }
   };
 
   useEffect(() => {
-    cargarDatos();
+    let cancelado = false;
+    const inicializar = async () => {
+      try {
+        const [resLotes, resAlertas, resClientes, resRecorridas] = await Promise.all([
+          fetch(`${API_URL}/api/lotes`),
+          fetch(`${API_URL}/api/alertas`),
+          fetch(`${API_URL}/api/clientes`),
+          fetch(`${API_URL}/api/recorridas`),
+        ]);
+        const dataLotes = (await resLotes.json()) as FeatureCollection;
+        const dataAlertas = (await resAlertas.json()) as Alerta[];
+        if (cancelado) return;
+        setGeojson(dataLotes);
+        if (dataLotes.features?.length > 0) {
+          const primerId = Number(dataLotes.features[0].properties?.id);
+          setLoteSeleccionado((prev) => prev ?? primerId);
+        }
+        setAlertas(dataAlertas);
+        if (resClientes.ok) {
+          setClientesLista((await resClientes.json()) as ClienteDisponible[]);
+        }
+        if (resRecorridas.ok) {
+          setRecorridas((await resRecorridas.json()) as RecorridaCampo[]);
+        }
+      } catch (err) {
+        console.error("Error conectando con FastAPI:", err);
+      } finally {
+        if (!cancelado) {
+          setIsSlowLoad(false);
+          setCargando(false);
+        }
+      }
+    };
+    void inicializar();
+    return () => {
+      cancelado = true;
+    };
   }, []);
+
+  // Carga configuración económica compartida desde PostgreSQL al cambiar establecimiento/campaña
+  useEffect(() => {
+    let cancelado = false;
+    const cargarEconomiaBd = async () => {
+      try {
+        const res = await fetch(
+          `${API_URL}/api/economia/configuracion?ambito=${encodeURIComponent(ambitoEconomico)}`
+        );
+        if (!res.ok || cancelado) return;
+        const data = (await res.json()) as {
+          configuracion?: {
+            supuestos_cultivo?: Record<string, SupuestoCultivo>;
+            es_campo_alquilado?: boolean;
+            arriendo_qq_soja?: number;
+            escenario?: string;
+          } | null;
+          presupuestos_lote?: Record<string, PresupuestoLote>;
+        };
+        if (cancelado) return;
+        if (data.presupuestos_lote) {
+          setPresupuestosLote(data.presupuestos_lote);
+        }
+        const cfg = data.configuracion;
+        if (cfg) {
+          if (cfg.supuestos_cultivo && Object.keys(cfg.supuestos_cultivo).length > 0) {
+            setSupuestos({ ...SUPUESTOS_DEFAULT, ...cfg.supuestos_cultivo });
+          }
+          if (typeof cfg.es_campo_alquilado === "boolean") {
+            setEsCampoAlquilado(cfg.es_campo_alquilado);
+          }
+          if (typeof cfg.arriendo_qq_soja === "number") {
+            setArriendoQqSoja(cfg.arriendo_qq_soja);
+          }
+          if (cfg.escenario && cfg.escenario in ESCENARIOS) {
+            setEscenario(cfg.escenario as EscenarioId);
+          }
+        }
+        setErrorSyncEconomia(null);
+      } catch {
+        // Mantiene fallback localStorage silenciosamente si no hay conexión
+      }
+    };
+    void cargarEconomiaBd();
+    return () => {
+      cancelado = true;
+    };
+  }, [ambitoEconomico]);
+
+  const handleSavePresupuestoLote = async (loteId: number, body: PresupuestoLote) => {
+    setSincronizandoEconomia(true);
+    try {
+      const res = await fetch(`${API_URL}/api/economia/lotes/${loteId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error();
+      const saved = (await res.json()) as PresupuestoLote;
+      setPresupuestosLote((prev) => ({ ...prev, [String(loteId)]: saved }));
+      setErrorSyncEconomia(null);
+    } catch {
+      setErrorSyncEconomia("No se pudo guardar el presupuesto del lote en la BD.");
+    } finally {
+      setSincronizandoEconomia(false);
+    }
+  };
 
   useEffect(() => {
     if (!loteActivoId) return;
@@ -285,12 +632,26 @@ export default function Home() {
   };
 
   const actualizarEstadoAlerta = async (alertaId: number, nuevoEstado: string) => {
-    await fetch(`${API_URL}/api/alertas/${alertaId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ estado: nuevoEstado }),
-    });
-    cargarDatos();
+    setActualizandoAlertaId(alertaId);
+    setErrorAlerta(null);
+    try {
+      const res = await fetch(`${API_URL}/api/alertas/${alertaId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estado: nuevoEstado }),
+      });
+      if (!res.ok) throw new Error();
+      setAlertas((prev) =>
+        prev.map((a) => (a.id === alertaId ? { ...a, estado: nuevoEstado } : a))
+      );
+      await recargarDatos();
+    } catch {
+      setErrorAlerta(
+        "No se pudo actualizar la alerta en el servidor. Reintenta en unos segundos."
+      );
+    } finally {
+      setActualizandoAlertaId(null);
+    }
   };
 
   const badgeSeveridad = (sev: string) => {
@@ -333,8 +694,12 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen w-full overflow-x-hidden bg-slate-950 text-slate-100">
-      <main className="w-full max-w-[1600px] mx-auto p-3 sm:p-6 lg:px-8 space-y-4 sm:space-y-6">
+    <div className="min-h-screen w-full overflow-x-hidden bg-slate-950 text-slate-100 print:overflow-visible print:bg-white print:text-slate-950">
+      <main
+        className={`w-full max-w-[1600px] mx-auto p-3 sm:p-6 lg:px-8 space-y-4 sm:space-y-6 ${
+          mostrarMinuta ? "print:hidden" : ""
+        }`}
+      >
         {/* Header responsive */}
       <header className="flex flex-col gap-2 border-b border-slate-800 pb-3 sm:flex-row sm:items-center sm:justify-between sm:pb-4">
         <div className="flex items-center gap-2.5 sm:gap-3">
@@ -348,6 +713,19 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              setLoteParaEditar(null);
+              setModalLoteNonce((n) => n + 1);
+              setModalLoteAbierto(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-slate-950 shadow-sm hover:bg-emerald-400 active:scale-95 transition"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Nuevo lote / Importar</span>
+          </button>
+
           {/* Badge de Frescura de Datos Dinámico */}
           <div
             title="Actualización diaria automática con imágenes Sentinel-2 y datos NASA POWER"
@@ -369,6 +747,20 @@ export default function Home() {
           </div>
         </div>
       </header>
+
+      {avisoOperativo && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs sm:text-sm text-emerald-200">
+          <span>{avisoOperativo}</span>
+          <button
+            type="button"
+            onClick={() => setAvisoOperativo(null)}
+            aria-label="Cerrar aviso"
+            className="rounded p-1 text-emerald-300 hover:bg-emerald-500/20"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Aviso de servidor en Render despertando (Cold Start > 4s) */}
       {isSlowLoad && cargando && (
@@ -458,12 +850,21 @@ export default function Home() {
             loteSeleccionadoId={loteActivoId}
             pronosticoLote={pronosticoLote}
             cargandoPronostico={cargandoPronostico}
+            cartera={carteraEconomica}
+            escenario={escenario}
+            esCampoAlquilado={esCampoAlquilado}
+            onAbrirEconomia={abrirEconomia}
+            onSelectLoteConZoom={seleccionarLoteConZoom}
+            onAbrirMinuta={() => setMostrarMinuta(true)}
           />
 
           {/* Grid Principal: Mapa + Panel de Alertas */}
           <div className="grid grid-cols-1 gap-4 lg:gap-6 lg:grid-cols-3">
             {/* Mapa (2 columnas) con altura progresiva */}
-            <section className="relative min-w-0 h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[580px] xl:h-[640px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col">
+            <section
+              ref={mapaRef}
+              className="relative min-w-0 h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[580px] xl:h-[640px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col"
+            >
               <div className="flex items-center justify-between mb-2 shrink-0">
                 <h2 className="font-semibold text-sm sm:text-base flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-emerald-400" />
@@ -532,6 +933,12 @@ export default function Home() {
                 })}
               </div>
 
+              {errorAlerta && (
+                <div className="mb-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300 shrink-0">
+                  {errorAlerta}
+                </div>
+              )}
+
               <div className="flex-1 overflow-y-auto space-y-3 pr-1">
                 {alertasFiltradas.length === 0 ? (
                   <p className="text-center py-12 text-sm text-slate-400">
@@ -540,8 +947,9 @@ export default function Home() {
                 ) : (
                   alertasFiltradas.map((alerta) => {
                     const diag = parseDiagnostico(
-                      alerta.diagnostico_llm || (alerta as any).mensaje || (alerta as any).diagnostico
+                      alerta.diagnostico_llm || alerta.mensaje || alerta.diagnostico || ""
                     );
+                    const enActualizacion = actualizandoAlertaId === alerta.id;
                     return (
                       <div
                         key={alerta.id}
@@ -613,31 +1021,70 @@ export default function Home() {
                               </span>
                             )}
                           </span>
-                          {alerta.estado !== "RESUELTA" && (
-                            <div className="flex items-center gap-1.5 sm:gap-2">
-                              {alerta.estado === "PENDIENTE" && (
+                          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRecorridaNonce((n) => n + 1);
+                                setContextoRecorrida({
+                                  loteId: alerta.lote_id,
+                                  nombreLote: alerta.nombre_lote,
+                                  alertaId: alerta.id,
+                                  alertaTipo: alerta.tipo_anomalia,
+                                });
+                              }}
+                              className="text-xs px-2 py-1.5 sm:py-2 min-h-[36px] flex items-center gap-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 hover:border-emerald-500/40 hover:text-emerald-300 transition"
+                              title="Registrar visita / nota de recorrida en este lote"
+                            >
+                              <ClipboardCheck className="w-3.5 h-3.5" />
+                              <span>Nota</span>
+                            </button>
+
+                            {alerta.estado !== "RESUELTA" && (
+                              <>
+                                {alerta.estado === "PENDIENTE" && (
+                                  <button
+                                    type="button"
+                                    disabled={enActualizacion}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setRecorridaNonce((n) => n + 1);
+                                      setContextoRecorrida({
+                                        loteId: alerta.lote_id,
+                                        nombreLote: alerta.nombre_lote,
+                                        alertaId: alerta.id,
+                                        alertaTipo: alerta.tipo_anomalia,
+                                        nuevoEstadoAlerta: "EN_REVISION",
+                                      });
+                                    }}
+                                    className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 transition active:scale-95 disabled:opacity-50"
+                                  >
+                                    {enActualizacion ? "..." : "En revisión"}
+                                  </button>
+                                )}
                                 <button
+                                  type="button"
+                                  disabled={enActualizacion}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    actualizarEstadoAlerta(alerta.id, "EN_REVISION");
+                                    setRecorridaNonce((n) => n + 1);
+                                    setContextoRecorrida({
+                                      loteId: alerta.lote_id,
+                                      nombreLote: alerta.nombre_lote,
+                                      alertaId: alerta.id,
+                                      alertaTipo: alerta.tipo_anomalia,
+                                      nuevoEstadoAlerta: "RESUELTA",
+                                    });
                                   }}
-                                  className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 transition active:scale-95"
+                                  className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center gap-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 hover:bg-emerald-500/20 transition active:scale-95 disabled:opacity-50"
                                 >
-                                  En revisión
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>{enActualizacion ? "Guardando..." : "Marcar resuelta"}</span>
                                 </button>
-                              )}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  actualizarEstadoAlerta(alerta.id, "RESUELTA");
-                                }}
-                                className="text-xs px-2.5 py-1.5 sm:py-2 min-h-[36px] flex items-center gap-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 hover:bg-emerald-500/20 transition active:scale-95"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>Marcar resuelta</span>
-                              </button>
-                            </div>
-                          )}
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -657,10 +1104,23 @@ export default function Home() {
             cargandoSeries={cargandoSeries}
             cargandoPronostico={cargandoPronostico}
             alertasVisibles={alertasContexto}
+            recorridasDelLote={recorridasLoteActivo}
+            onAbrirRecorrida={(idLote, nombre) => {
+              setRecorridaNonce((n) => n + 1);
+              setContextoRecorrida({ loteId: idLote, nombreLote: nombre });
+            }}
+            onEditarLote={(lote) => {
+              setLoteParaEditar(lote);
+              setModalLoteNonce((n) => n + 1);
+              setModalLoteAbierto(true);
+            }}
           />
 
           {/* Navegación por pestañas para evitar exceso de scroll */}
-          <div className="flex flex-nowrap overflow-x-auto gap-2 border-b border-slate-800 pb-2">
+          <div
+            ref={seccionDetalleRef}
+            className="flex flex-nowrap overflow-x-auto gap-2 border-b border-slate-800 pb-2"
+          >
             <button
               type="button"
               onClick={() => setTabDetalle("campo")}
@@ -714,9 +1174,21 @@ export default function Home() {
           {tabDetalle === "economia" && (
             <ModuloEconomico
               geojsonFiltrado={geojsonFiltrado}
-              alertasVisibles={alertasContexto}
               loteSeleccionadoId={loteActivoId}
               onSelectLote={seleccionarLoteConZoom}
+              onVerEnMapa={verLoteEnMapa}
+              cartera={carteraEconomica}
+              supuestos={supuestos}
+              onChangeSupuestos={handleChangeSupuestos}
+              esCampoAlquilado={esCampoAlquilado}
+              onChangeEsCampoAlquilado={handleChangeCampoAlquilado}
+              arriendoQqSoja={arriendoQqSoja}
+              onChangeArriendoQqSoja={handleChangeArriendoQqSoja}
+              escenario={escenario}
+              onChangeEscenario={handleChangeEscenario}
+              onSavePresupuestoLote={handleSavePresupuestoLote}
+              sincronizandoBd={sincronizandoEconomia}
+              errorSyncBd={errorSyncEconomia}
             />
           )}
 
@@ -725,9 +1197,10 @@ export default function Home() {
               <div className="lg:col-span-2 min-w-0">
                 {loteActivoId && seriesLote ? (
                   <ChatLote
-                    loteId={loteActivoId}
+                    key={loteActivoId}
                     loteNombre={seriesLote.lote.nombre_lote}
                     datosLote={datosCombinadosLote}
+                    recorridas={recorridasLoteActivo}
                   />
                 ) : (
                   <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-400">
@@ -806,6 +1279,66 @@ export default function Home() {
         </>
       )}
       </main>
+
+      <MinutaGestionModal
+        abierto={mostrarMinuta}
+        onCerrar={() => setMostrarMinuta(false)}
+        filtroCliente={filtroCliente}
+        filtroCampana={filtroCampana}
+        ultimaFecha={ultimaFecha}
+        cartera={carteraEconomica}
+        esCampoAlquilado={esCampoAlquilado}
+        arriendoQqSoja={arriendoQqSoja}
+        escenario={escenario}
+        alertasVisibles={alertasContexto}
+        recorridasVisibles={recorridasContexto}
+        pronosticoLote={pronosticoLote}
+      />
+
+      <GestionLotesModal
+        key={`lote-modal-${modalLoteNonce}-${loteParaEditar?.id ?? "new"}`}
+        abierto={modalLoteAbierto}
+        loteEditar={loteParaEditar}
+        clientes={clientesLista}
+        apiUrl={API_URL}
+        onCerrar={() => setModalLoteAbierto(false)}
+        onLoteCreado={async (res: ResultadoAltaLote) => {
+          await recargarDatos();
+          seleccionarLoteConZoom(res.id);
+          setAvisoOperativo(
+            `Lote "${res.nombre_lote}" creado (${res.hectareas} ha). Clima precargado (${res.clima_dias_ingestados} días NASA POWER). ${
+              res.satelite_workflow_disparado
+                ? "Ingesta satelital Sentinel-2 disparada."
+                : "Imágenes Sentinel-2 disponibles tras el próximo ciclo ETL (06:00 hs)."
+            }`
+          );
+        }}
+        onLoteActualizado={async () => {
+          await recargarDatos();
+          setAvisoOperativo("Datos agronómicos del lote actualizados.");
+        }}
+        onLoteEliminado={async (idBorrado: number, nombre: string) => {
+          if (loteSeleccionado === idBorrado) {
+            setLoteSeleccionado(null);
+          }
+          await recargarDatos();
+          setAvisoOperativo(`Lote "${nombre}" eliminado.`);
+        }}
+      />
+
+      <RecorridaModal
+        key={`rec-modal-${recorridaNonce}`}
+        contexto={contextoRecorrida}
+        apiUrl={API_URL}
+        onCerrar={() => setContextoRecorrida(null)}
+        onGuardado={async () => {
+          await recargarDatos();
+          setAvisoOperativo("Recorrida a campo guardada en la bitácora.");
+        }}
+        onSoloCambiarEstado={async (alertaId, nuevoEstado) => {
+          await actualizarEstadoAlerta(alertaId, nuevoEstado);
+        }}
+      />
     </div>
   );
 }

@@ -18,6 +18,7 @@ CREATE TABLE lotes (
     cultivo_actual VARCHAR(50),
     campana VARCHAR(20),
     hectareas NUMERIC(10, 2),
+    fecha_siembra DATE,
     geom GEOMETRY(Polygon, 4326) NOT NULL,
     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -64,4 +65,38 @@ CREATE TABLE alertas_ia (
     score_anomalia NUMERIC(5, 4),
     diagnostico_llm TEXT,
     estado VARCHAR(20) DEFAULT 'PENDIENTE' CHECK (estado IN ('PENDIENTE', 'EN_REVISION', 'RESUELTA'))
+);
+
+-- 6. Bitácora de Recorridas a Campo (cierre agronómico de alertas y visitas)
+CREATE TABLE IF NOT EXISTS recorridas_campo (
+    id SERIAL PRIMARY KEY,
+    lote_id INTEGER NOT NULL REFERENCES lotes(id) ON DELETE CASCADE,
+    alerta_id INTEGER REFERENCES alertas_ia(id) ON DELETE SET NULL,
+    fecha_recorrida DATE NOT NULL DEFAULT CURRENT_DATE,
+    autor VARCHAR(100),
+    hallazgo TEXT NOT NULL,
+    labor_recomendada TEXT,
+    costo_labor_usd_ha NUMERIC(10, 2) DEFAULT 0,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_recorridas_lote_id ON recorridas_campo (lote_id);
+
+-- 7. Configuración Económica Persistida por Cartera / Establecimiento / Campaña
+CREATE TABLE IF NOT EXISTS configuracion_economica_cartera (
+    id SERIAL PRIMARY KEY,
+    clave_ambito VARCHAR(200) UNIQUE NOT NULL,
+    supuestos_cultivo JSONB NOT NULL DEFAULT '{}'::jsonb,
+    es_campo_alquilado BOOLEAN NOT NULL DEFAULT FALSE,
+    arriendo_qq_soja NUMERIC(6, 2) NOT NULL DEFAULT 12,
+    escenario VARCHAR(40) NOT NULL DEFAULT 'base',
+    actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 8. Presupuesto y Rinde Esperado Individual por Lote
+CREATE TABLE IF NOT EXISTS presupuestos_lote (
+    lote_id INTEGER PRIMARY KEY REFERENCES lotes(id) ON DELETE CASCADE,
+    rinde_objetivo_qq_ha NUMERIC(8, 2),
+    costo_extra_usd_ha NUMERIC(10, 2) DEFAULT 0,
+    notas_presupuesto TEXT,
+    actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

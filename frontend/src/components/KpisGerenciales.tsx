@@ -6,10 +6,19 @@ import {
   Layers,
   ShieldCheck,
   AlertTriangle,
-  Sprout,
+  DollarSign,
   CloudRain,
+  FileText,
+  ArrowUpRight,
 } from "lucide-react";
 import type { PronosticoLoteData } from "@/components/PronosticoLote";
+import {
+  ESCENARIOS,
+  esAlertaActiva,
+  formatUsd,
+  type CarteraEconomica,
+  type EscenarioId,
+} from "@/lib/economia";
 
 export interface AlertaKpi {
   id: number;
@@ -30,16 +39,12 @@ interface KpisGerencialesProps {
   loteSeleccionadoId: number | null;
   pronosticoLote: PronosticoLoteData | null;
   cargandoPronostico: boolean;
-}
-
-function esAlertaActiva(estado?: string): boolean {
-  const norm = (estado || "").toLowerCase().trim();
-  return (
-    norm === "pendiente" ||
-    norm === "activa" ||
-    norm === "en_revision" ||
-    norm === "en revisión"
-  );
+  cartera: CarteraEconomica;
+  escenario: EscenarioId;
+  esCampoAlquilado: boolean;
+  onAbrirEconomia: () => void;
+  onSelectLoteConZoom: (loteId: number) => void;
+  onAbrirMinuta: () => void;
 }
 
 export default function KpisGerenciales({
@@ -54,13 +59,15 @@ export default function KpisGerenciales({
   loteSeleccionadoId,
   pronosticoLote,
   cargandoPronostico,
+  cartera,
+  escenario,
+  esCampoAlquilado,
+  onAbrirEconomia,
+  onSelectLoteConZoom,
+  onAbrirMinuta,
 }: KpisGerencialesProps) {
   const features: Feature[] = geojsonFiltrado?.features || [];
-
-  const totalHectareas = features.reduce(
-    (acc, f) => acc + (Number(f.properties?.hectareas) || 0),
-    0
-  );
+  const { totales, prioridadUno } = cartera;
 
   const lotesConAlertaSet = new Set(
     alertasVisibles
@@ -71,13 +78,10 @@ export default function KpisGerenciales({
   const featuresEnAlerta = features.filter((f) =>
     lotesConAlertaSet.has(Number(f.properties?.id))
   );
-  const haEnAlerta = featuresEnAlerta.reduce(
-    (acc, f) => acc + (Number(f.properties?.hectareas) || 0),
-    0
-  );
-  const haEstables = Math.max(0, totalHectareas - haEnAlerta);
+  const haEnAlerta = totales.hectareasEnAlerta;
+  const haEstables = Math.max(0, totales.hectareas - haEnAlerta);
   const pctEstable =
-    totalHectareas > 0 ? Math.round((haEstables / totalHectareas) * 100) : 100;
+    totales.hectareas > 0 ? Math.round((haEstables / totales.hectareas) * 100) : 100;
 
   // Agrupación por unidad de negocio (cultivo)
   const mapaCultivos: Record<string, number> = {};
@@ -113,7 +117,7 @@ export default function KpisGerenciales({
 
   return (
     <section className="space-y-3 min-w-0">
-      {/* Barra de filtros gerenciales por Establecimiento y Campaña */}
+      {/* Barra de filtros gerenciales por Establecimiento y Campaña + Minuta */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2.5 sm:px-4">
         <div className="flex items-center gap-2 text-xs sm:text-sm font-medium text-slate-200">
           <Building2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -161,87 +165,37 @@ export default function KpisGerenciales({
               Ver todos
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={onAbrirMinuta}
+            className="flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/25 transition"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Minuta de Gestión</span>
+          </button>
         </div>
       </div>
 
-      {/* 4 Tarjetas KPI */}
+      {/* 4 Tarjetas KPI Ejecutivas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
-        {/* KPI 1: Superficie Monitoreada */}
+        {/* KPI 1: Superficie y Unidades de Negocio */}
         <div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3.5 sm:p-4 flex flex-col justify-between gap-1.5">
           <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Superficie monitoreada</span>
+            <span>Superficie y cultivos</span>
             <Layers className="w-4 h-4 text-emerald-400 shrink-0" />
           </div>
-          <div className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight">
-            {totalHectareas > 0
-              ? `${totalHectareas.toLocaleString("es-AR", {
-                  maximumFractionDigits: 1,
-                })} ha`
-              : "—"}
-          </div>
-          <p className="text-[11px] text-slate-400 truncate">
-            {features.length} {features.length === 1 ? "parcela" : "parcelas"} ·{" "}
-            {establecimientosVisibles}{" "}
-            {establecimientosVisibles === 1 ? "establecimiento" : "establecimientos"}
-          </p>
-        </div>
-
-        {/* KPI 2: Superficie Estable vs En Alerta */}
-        <div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3.5 sm:p-4 flex flex-col justify-between gap-1.5">
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Salud de superficie</span>
-            {haEnAlerta > 0 ? (
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            ) : (
-              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-            )}
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span
-              className={`text-xl sm:text-2xl font-bold tracking-tight ${
-                pctEstable >= 80
-                  ? "text-emerald-400"
-                  : pctEstable >= 50
-                  ? "text-amber-400"
-                  : "text-red-400"
-              }`}
-            >
-              {pctEstable}% estable
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight">
+              {totales.hectareas > 0
+                ? `${totales.hectareas.toLocaleString("es-AR", {
+                    maximumFractionDigits: 1,
+                  })} ha`
+                : "—"}
             </span>
-          </div>
-          <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ${
-                pctEstable >= 80
-                  ? "bg-emerald-500"
-                  : pctEstable >= 50
-                  ? "bg-amber-400"
-                  : "bg-red-500"
-              }`}
-              style={{ width: `${pctEstable}%` }}
-            />
-          </div>
-          <p className="text-[11px] text-slate-400 truncate">
-            {haEnAlerta > 0
-              ? `${haEnAlerta.toLocaleString("es-AR", {
-                  maximumFractionDigits: 1,
-                })} ha en alerta (${featuresEnAlerta.length} ${
-                  featuresEnAlerta.length === 1 ? "lote" : "lotes"
-                })`
-              : "0 ha comprometidas por alertas activas"}
-          </p>
-        </div>
-
-        {/* KPI 3: Unidades de Negocio (Cultivos) */}
-        <div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3.5 sm:p-4 flex flex-col justify-between gap-1.5">
-          <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Unidades de negocio</span>
-            <Sprout className="w-4 h-4 text-emerald-400 shrink-0" />
-          </div>
-          <div className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight">
-            {cultivosOrdenados.length}{" "}
-            <span className="text-sm font-medium text-slate-400">
-              {cultivosOrdenados.length === 1 ? "cultivo" : "cultivos"}
+            <span className="text-[11px] text-slate-400 shrink-0">
+              {features.length} {features.length === 1 ? "lote" : "lotes"} ·{" "}
+              {establecimientosVisibles} est.
             </span>
           </div>
           <div className="flex flex-wrap gap-1">
@@ -261,10 +215,109 @@ export default function KpisGerenciales({
           </div>
         </div>
 
-        {/* KPI 4: Lluvia Prevista 7d & Vigor Promedio */}
+        {/* KPI 2: Salud de Superficie + Prioridad #1 de Recorrida */}
         <div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3.5 sm:p-4 flex flex-col justify-between gap-1.5">
           <div className="flex items-center justify-between text-xs text-slate-400">
-            <span>Lluvia 7d · Vigor</span>
+            <span>Salud y prioridad de recorrida</span>
+            {haEnAlerta > 0 ? (
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            ) : (
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            )}
+          </div>
+          <div className="flex items-baseline justify-between gap-2">
+            <span
+              className={`text-xl sm:text-2xl font-bold tracking-tight ${
+                pctEstable >= 80
+                  ? "text-emerald-400"
+                  : pctEstable >= 50
+                  ? "text-amber-400"
+                  : "text-red-400"
+              }`}
+            >
+              {pctEstable}% estable
+            </span>
+            <span className="text-[11px] text-slate-400">
+              {featuresEnAlerta.length} en alerta
+            </span>
+          </div>
+          <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-300 ${
+                pctEstable >= 80
+                  ? "bg-emerald-500"
+                  : pctEstable >= 50
+                  ? "bg-amber-400"
+                  : "bg-red-500"
+              }`}
+              style={{ width: `${pctEstable}%` }}
+            />
+          </div>
+          {prioridadUno ? (
+            <button
+              type="button"
+              onClick={() => onSelectLoteConZoom(prioridadUno.id)}
+              className="text-left text-[11px] text-amber-300 hover:text-amber-200 underline decoration-amber-500/40 truncate transition"
+              title="Clic para enfocar el lote prioritario en el mapa"
+            >
+              Prioridad #1: {prioridadUno.nombreCorto} (~
+              {formatUsd(prioridadUno.ingresoEnRiesgoUsd)})
+            </button>
+          ) : (
+            <p className="text-[11px] text-slate-400 truncate">
+              0 ha comprometidas por alertas activas
+            </p>
+          )}
+        </div>
+
+        {/* KPI 3: Margen Bruto Proyectado & Capital en Riesgo (clic lleva a Gestión Económica) */}
+        <button
+          type="button"
+          onClick={onAbrirEconomia}
+          className="min-w-0 text-left rounded-xl border border-slate-800 bg-slate-900/70 hover:border-emerald-500/50 p-3.5 sm:p-4 flex flex-col justify-between gap-1.5 transition group"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-400 w-full gap-1.5">
+            <span className="inline-flex items-center gap-1 truncate">
+              <DollarSign className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="truncate">Margen bruto proyectado</span>
+            </span>
+            <span className="rounded bg-slate-800/90 border border-slate-700/80 px-1.5 py-0.5 text-[10px] text-slate-300 shrink-0 whitespace-nowrap">
+              {(ESCENARIOS[escenario] ?? ESCENARIOS.base).label} · {esCampoAlquilado ? "Alq." : "Propio"}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between gap-2 w-full">
+            <span
+              className={`text-xl sm:text-2xl font-bold tracking-tight ${
+                totales.margenUsd >= 0 ? "text-emerald-400" : "text-red-400"
+              }`}
+            >
+              {formatUsd(totales.margenUsd)}
+            </span>
+            <span className="text-[11px] font-mono text-slate-300 shrink-0">
+              USD {Math.round(totales.margenPromedioHa).toLocaleString("es-AR")}/ha
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2 w-full text-[11px]">
+            <span
+              className={
+                totales.ingresoEnRiesgoUsd > 0 ? "text-amber-300" : "text-slate-400"
+              }
+            >
+              {totales.ingresoEnRiesgoUsd > 0
+                ? `En riesgo: ${formatUsd(totales.ingresoEnRiesgoUsd)}`
+                : "Sin capital en riesgo"}
+            </span>
+            <span className="inline-flex items-center gap-0.5 text-emerald-400 group-hover:underline shrink-0">
+              Detalle
+              <ArrowUpRight className="w-3 h-3" />
+            </span>
+          </div>
+        </button>
+
+        {/* KPI 4: Lluvia Prevista 7d (Lote activo) & Vigor Promedio de Cartera */}
+        <div className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/70 p-3.5 sm:p-4 flex flex-col justify-between gap-1.5">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Clima 7d (lote) · Vigor cartera</span>
             <CloudRain className="w-4 h-4 text-sky-400 shrink-0" />
           </div>
           <div className="flex items-baseline justify-between gap-2">
@@ -277,13 +330,13 @@ export default function KpisGerenciales({
             </span>
             {ndviPromedio && (
               <span className="rounded bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[11px] font-mono text-emerald-300">
-                NDVI prom: {ndviPromedio}
+                NDVI cartera: {ndviPromedio}
               </span>
             )}
           </div>
           <p className="text-[11px] text-slate-400 truncate">
             {nombreLoteActivo
-              ? `Pronóstico en ${nombreLoteActivo}`
+              ? `Lluvia 7d en ${nombreLoteActivo}`
               : "Selecciona un lote para ver pronóstico"}
           </p>
         </div>

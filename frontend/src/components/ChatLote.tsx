@@ -1,7 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Sparkles, Send } from "lucide-react";
+import type { RecorridaCampo } from "@/components/RecorridaModal";
+
+export interface DatoCombinadoLote {
+  fecha: string;
+  ndvi: number | null;
+  ndwi: number | null;
+  precipitacion_mm: number | null;
+  temp_max_c: number | null;
+  temp_min_c: number | null;
+}
 
 interface Mensaje {
   rol: "user" | "assistant";
@@ -9,9 +19,9 @@ interface Mensaje {
 }
 
 interface ChatLoteProps {
-  loteId: string | number;
   loteNombre: string;
-  datosLote: any[];
+  datosLote: DatoCombinadoLote[];
+  recorridas?: RecorridaCampo[];
 }
 
 const SUGERENCIAS = [
@@ -22,16 +32,14 @@ const SUGERENCIAS = [
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-export default function ChatLote({ loteId, loteNombre, datosLote }: ChatLoteProps) {
+export default function ChatLote({
+  loteNombre,
+  datosLote,
+  recorridas = [],
+}: ChatLoteProps) {
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
   const [input, setInput] = useState("");
   const [cargando, setCargando] = useState(false);
-
-  // Reinicia el chat al cambiar de lote en el mapa
-  useEffect(() => {
-    setMensajes([]);
-    setInput("");
-  }, [loteId]);
 
   const enviarPregunta = async (textoPregunta: string) => {
     const pregunta = textoPregunta.trim();
@@ -49,6 +57,7 @@ export default function ChatLote({ loteId, loteNombre, datosLote }: ChatLoteProp
           lote_nombre: loteNombre,
           pregunta,
           datos: datosLote.slice(-60),
+          recorridas: recorridas.slice(0, 10),
         }),
       });
 

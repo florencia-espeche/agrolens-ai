@@ -154,7 +154,8 @@ def run_etl(days: int = 7):
                         ndvi_mediana = EXCLUDED.ndvi_mediana,
                         ndvi_p10 = EXCLUDED.ndvi_p10,
                         ndvi_p90 = EXCLUDED.ndvi_p90,
-                        ndwi_mediana = EXCLUDED.ndwi_mediana;
+                        ndwi_mediana = EXCLUDED.ndwi_mediana,
+                        nubosidad_pct = EXCLUDED.nubosidad_pct;
                 """, (
                     lote_id, s2["fecha_imagen"],
                     round(s2["ndvi_mediana"], 4),

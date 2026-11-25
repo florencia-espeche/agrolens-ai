@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import {
+  Fragment,
+  useState,
+  useMemo,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import type { Feature, FeatureCollection } from "geojson";
 import {
   DollarSign,
@@ -11,6 +17,8 @@ import {
   RotateCcw,
   Download,
   BarChart3,
+  Sliders,
+  Database,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -24,108 +32,93 @@ import {
   ReferenceLine,
   Cell,
 } from "recharts";
-
-export interface AlertaEconomica {
-  id: number;
-  lote_id: number;
-  nivel_severidad: string;
-  estado: string;
-}
-
-export interface SupuestoCultivo {
-  costoUsdHa: number;
-  precioUsdTn: number;
-  rindeObjetivoQqHa: number;
-}
+import {
+  ESCENARIOS,
+  SUPUESTOS_DEFAULT,
+  obtenerSupuestoInicial,
+  formatUsd,
+  type CarteraEconomica,
+  type EscenarioId,
+  type FilaEconomicaLote,
+  type PresupuestoLote,
+  type SupuestoCultivo,
+} from "@/lib/economia";
 
 interface ModuloEconomicoProps {
   geojsonFiltrado: FeatureCollection | null;
-  alertasVisibles: AlertaEconomica[];
   loteSeleccionadoId: number | null;
   onSelectLote: (loteId: number) => void;
-}
-
-const SUPUESTOS_DEFAULT: Record<string, SupuestoCultivo> = {
-  "Soja 1ra": { costoUsdHa: 620, precioUsdTn: 290, rindeObjetivoQqHa: 36 },
-  "Maíz Temprano": { costoUsdHa: 820, precioUsdTn: 185, rindeObjetivoQqHa: 92 },
-  "Maíz Tardío": { costoUsdHa: 740, precioUsdTn: 180, rindeObjetivoQqHa: 80 },
-  "Trigo / Soja 2da": { costoUsdHa: 790, precioUsdTn: 245, rindeObjetivoQqHa: 56 },
-};
-
-const SUPUESTO_FALLBACK: SupuestoCultivo = {
-  costoUsdHa: 650,
-  precioUsdTn: 240,
-  rindeObjetivoQqHa: 40,
-};
-
-type EscenarioId =
-  | "base"
-  | "rinde_menos_10"
-  | "rinde_menos_20"
-  | "precio_menos_15"
-  | "optimista_10";
-
-const ESCENARIOS: Record<
-  EscenarioId,
-  { label: string; factorRinde: number; factorPrecio: number }
-> = {
-  base: { label: "Base", factorRinde: 1, factorPrecio: 1 },
-  rinde_menos_10: { label: "Rinde -10%", factorRinde: 0.9, factorPrecio: 1 },
-  rinde_menos_20: { label: "Sequía (-20% Rinde)", factorRinde: 0.8, factorPrecio: 1 },
-  precio_menos_15: { label: "Precio -15%", factorRinde: 1, factorPrecio: 0.85 },
-  optimista_10: { label: "Año bueno (+10%)", factorRinde: 1.1, factorPrecio: 1 },
-};
-
-function obtenerSupuestoInicial(cultivo: string): SupuestoCultivo {
-  if (SUPUESTOS_DEFAULT[cultivo]) return SUPUESTOS_DEFAULT[cultivo];
-  const lower = cultivo.toLowerCase();
-  if (lower.includes("soja") && lower.includes("trigo")) {
-    return SUPUESTOS_DEFAULT["Trigo / Soja 2da"];
-  }
-  if (lower.includes("maíz") || lower.includes("maiz")) {
-    return lower.includes("tard")
-      ? SUPUESTOS_DEFAULT["Maíz Tardío"]
-      : SUPUESTOS_DEFAULT["Maíz Temprano"];
-  }
-  if (lower.includes("soja")) return SUPUESTOS_DEFAULT["Soja 1ra"];
-  return SUPUESTO_FALLBACK;
-}
-
-function esAlertaActiva(estado?: string): boolean {
-  const norm = (estado || "").toLowerCase().trim();
-  return (
-    norm === "pendiente" ||
-    norm === "activa" ||
-    norm === "en_revision" ||
-    norm === "en revisión"
-  );
-}
-
-function factorRiesgoPorSeveridad(severidad?: string): number {
-  const sev = (severidad || "").toUpperCase().trim();
-  if (sev === "CRITICA") return 0.25;
-  if (sev === "ALTA") return 0.15;
-  if (sev === "MEDIA") return 0.08;
-  return 0.05;
-}
-
-function formatUsd(valor: number): string {
-  return `USD ${Math.round(valor).toLocaleString("es-AR")}`;
+  onVerEnMapa?: (loteId: number) => void;
+  cartera: CarteraEconomica;
+  supuestos: Record<string, SupuestoCultivo>;
+  onChangeSupuestos: Dispatch<SetStateAction<Record<string, SupuestoCultivo>>>;
+  esCampoAlquilado: boolean;
+  onChangeEsCampoAlquilado: (val: boolean) => void;
+  arriendoQqSoja: number;
+  onChangeArriendoQqSoja: (val: number) => void;
+  escenario: EscenarioId;
+  onChangeEscenario: (val: EscenarioId) => void;
+  onSavePresupuestoLote?: (loteId: number, data: PresupuestoLote) => Promise<void>;
+  sincronizandoBd?: boolean;
+  errorSyncBd?: string | null;
 }
 
 export default function ModuloEconomico({
   geojsonFiltrado,
-  alertasVisibles,
   loteSeleccionadoId,
   onSelectLote,
+  onVerEnMapa,
+  cartera,
+  supuestos,
+  onChangeSupuestos,
+  esCampoAlquilado,
+  onChangeEsCampoAlquilado,
+  arriendoQqSoja,
+  onChangeArriendoQqSoja,
+  escenario,
+  onChangeEscenario,
+  onSavePresupuestoLote,
+  sincronizandoBd = false,
+  errorSyncBd = null,
 }: ModuloEconomicoProps) {
-  const [supuestos, setSupuestos] = useState<Record<string, SupuestoCultivo>>(
-    () => ({ ...SUPUESTOS_DEFAULT })
-  );
   const [mostrarEditor, setMostrarEditor] = useState(false);
-  const [esCampoAlquilado, setEsCampoAlquilado] = useState(false);
-  const [arriendoQqSoja, setArriendoQqSoja] = useState(12);
-  const [escenario, setEscenario] = useState<EscenarioId>("base");
+  const [editandoLoteId, setEditandoLoteId] = useState<number | null>(null);
+  const [rindeLoteInput, setRindeLoteInput] = useState("");
+  const [costoExtraInput, setCostoExtraInput] = useState("0");
+  const [notasLoteInput, setNotasLoteInput] = useState("");
+  const [guardandoLote, setGuardandoLote] = useState(false);
+
+  const abrirAjusteLote = (row: FilaEconomicaLote) => {
+    if (editandoLoteId === row.id) {
+      setEditandoLoteId(null);
+      return;
+    }
+    setEditandoLoteId(row.id);
+    setRindeLoteInput(
+      row.rindeBaseLoteQqHa !== null ? String(row.rindeBaseLoteQqHa) : ""
+    );
+    setCostoExtraInput(String(row.costoExtraManualHa || 0));
+    setNotasLoteInput(row.notasPresupuesto || "");
+  };
+
+  const handleGuardarLote = async (loteId: number) => {
+    if (!onSavePresupuestoLote) return;
+    setGuardandoLote(true);
+    try {
+      const rindeParsed =
+        rindeLoteInput.trim() === ""
+          ? null
+          : Math.max(0, Number(rindeLoteInput) || 0);
+      await onSavePresupuestoLote(loteId, {
+        rinde_objetivo_qq_ha: rindeParsed && rindeParsed > 0 ? rindeParsed : null,
+        costo_extra_usd_ha: Math.max(0, Number(costoExtraInput) || 0),
+        notas_presupuesto: notasLoteInput.trim() || null,
+      });
+      setEditandoLoteId(null);
+    } finally {
+      setGuardandoLote(false);
+    }
+  };
 
   const features: Feature[] = useMemo(
     () => geojsonFiltrado?.features || [],
@@ -142,135 +135,7 @@ export default function ModuloEconomico({
     return Array.from(set);
   }, [features]);
 
-  const configEscenario = ESCENARIOS[escenario];
-
-  const precioSojaReferencia =
-    (supuestos["Soja 1ra"]?.precioUsdTn ?? SUPUESTOS_DEFAULT["Soja 1ra"].precioUsdTn) *
-    configEscenario.factorPrecio;
-  const arriendoUsdHa = esCampoAlquilado
-    ? (arriendoQqSoja / 10) * precioSojaReferencia
-    : 0;
-
-  const filasCalculadas = useMemo(() => {
-    return features.map((f) => {
-      const p = f.properties || {};
-      const id = Number(p.id);
-      const nombreLote = String(p.nombre_lote || `Lote ${id}`);
-      const nombreCorto = nombreLote.split(" - ")[0] || nombreLote;
-      const cliente = String(p.cliente || "Sin establecimiento");
-      const cultivo = String(p.cultivo_actual || "Sin especificar");
-      const hectareas = Number(p.hectareas) || 0;
-
-      const supuesto = supuestos[cultivo] || obtenerSupuestoInicial(cultivo);
-      const costoDirectoHa = supuesto.costoUsdHa;
-      const precioUsdTn = Math.round(supuesto.precioUsdTn * configEscenario.factorPrecio);
-      const rindeObjetivoQqHa = Number(
-        (supuesto.rindeObjetivoQqHa * configEscenario.factorRinde).toFixed(1)
-      );
-      const costoUsdHa = costoDirectoHa + arriendoUsdHa;
-
-      // 1 tonelada = 10 quintales
-      const ingresoBrutoHa = (rindeObjetivoQqHa / 10) * precioUsdTn;
-      const margenBrutoHa = ingresoBrutoHa - costoUsdHa;
-      const rindeIndiferenciaQqHa =
-        precioUsdTn > 0 ? (costoUsdHa / precioUsdTn) * 10 : 0;
-      const holguraQqHa = rindeObjetivoQqHa - rindeIndiferenciaQqHa;
-
-      const inversionTotalUsd = hectareas * costoUsdHa;
-      const ingresoTotalUsd = hectareas * ingresoBrutoHa;
-      const margenBrutoTotalUsd = hectareas * margenBrutoHa;
-
-      // Buscar alerta activa de mayor severidad en el lote
-      const alertasLoteActivas = alertasVisibles.filter(
-        (a) => a.lote_id === id && esAlertaActiva(a.estado)
-      );
-
-      let severidadMaxima: string | null = null;
-      if (alertasLoteActivas.length > 0) {
-        const orden: Record<string, number> = {
-          CRITICA: 1,
-          ALTA: 2,
-          MEDIA: 3,
-          BAJA: 4,
-        };
-        const ordenada = [...alertasLoteActivas].sort(
-          (a, b) =>
-            (orden[a.nivel_severidad?.toUpperCase()] ?? 99) -
-            (orden[b.nivel_severidad?.toUpperCase()] ?? 99)
-        );
-        severidadMaxima = ordenada[0].nivel_severidad?.toUpperCase() || "ACTIVA";
-      }
-
-      const factorRiesgo = severidadMaxima
-        ? factorRiesgoPorSeveridad(severidadMaxima)
-        : 0;
-      const ingresoEnRiesgoUsd = ingresoTotalUsd * factorRiesgo;
-
-      return {
-        id,
-        nombreLote,
-        nombreCorto,
-        cliente,
-        cultivo,
-        hectareas,
-        costoUsdHa,
-        costoUsdHaRedondeado: Math.round(costoUsdHa),
-        margenBrutoHaRedondeado: Math.round(margenBrutoHa),
-        precioUsdTn,
-        rindeObjetivoQqHa,
-        rindeIndiferenciaQqHa: Number(rindeIndiferenciaQqHa.toFixed(1)),
-        holguraQqHa,
-        margenBrutoHa,
-        inversionTotalUsd,
-        ingresoTotalUsd,
-        margenBrutoTotalUsd,
-        severidadMaxima,
-        factorRiesgo,
-        ingresoEnRiesgoUsd,
-      };
-    });
-  }, [features, alertasVisibles, supuestos, arriendoUsdHa, configEscenario]);
-
-  const totales = useMemo(() => {
-    const hectareas = filasCalculadas.reduce((acc, r) => acc + r.hectareas, 0);
-    const inversionUsd = filasCalculadas.reduce(
-      (acc, r) => acc + r.inversionTotalUsd,
-      0
-    );
-    const ingresoUsd = filasCalculadas.reduce(
-      (acc, r) => acc + r.ingresoTotalUsd,
-      0
-    );
-    const margenUsd = filasCalculadas.reduce(
-      (acc, r) => acc + r.margenBrutoTotalUsd,
-      0
-    );
-    const capitalEnAlertaUsd = filasCalculadas
-      .filter((r) => r.severidadMaxima !== null)
-      .reduce((acc, r) => acc + r.inversionTotalUsd, 0);
-    const hectareasEnAlerta = filasCalculadas
-      .filter((r) => r.severidadMaxima !== null)
-      .reduce((acc, r) => acc + r.hectareas, 0);
-    const ingresoEnRiesgoUsd = filasCalculadas.reduce(
-      (acc, r) => acc + r.ingresoEnRiesgoUsd,
-      0
-    );
-
-    const margenPromedioHa = hectareas > 0 ? margenUsd / hectareas : 0;
-    const roiPct = inversionUsd > 0 ? Math.round((margenUsd / inversionUsd) * 100) : 0;
-
-    return {
-      hectareas,
-      inversionUsd,
-      ingresoUsd,
-      margenUsd,
-      margenPromedioHa,
-      capitalEnAlertaUsd,
-      hectareasEnAlerta,
-      ingresoEnRiesgoUsd,
-      roiPct,
-    };
-  }, [filasCalculadas]);
+  const { filas: filasCalculadas, totales, arriendoUsdHa } = cartera;
 
   const actualizarSupuesto = (
     cultivo: string,
@@ -278,7 +143,7 @@ export default function ModuloEconomico({
     valorRaw: string
   ) => {
     const valor = Math.max(0, Number(valorRaw) || 0);
-    setSupuestos((prev) => {
+    onChangeSupuestos((prev) => {
       const actual = prev[cultivo] || obtenerSupuestoInicial(cultivo);
       return {
         ...prev,
@@ -291,7 +156,7 @@ export default function ModuloEconomico({
   };
 
   const restablecerSupuestos = () => {
-    setSupuestos({ ...SUPUESTOS_DEFAULT });
+    onChangeSupuestos({ ...SUPUESTOS_DEFAULT });
   };
 
   const exportarEconomicoCSV = () => {
@@ -352,12 +217,29 @@ export default function ModuloEconomico({
       {/* Header del Módulo Económico */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-base sm:text-lg font-semibold text-slate-100 flex items-center gap-2">
+          <h2 className="text-base sm:text-lg font-semibold text-slate-100 flex items-center gap-2 flex-wrap">
             <DollarSign className="w-5 h-5 text-emerald-400 shrink-0" />
             <span>Gestión Económica · Margen Bruto y Rinde de Indiferencia</span>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                errorSyncBd
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                  : sincronizandoBd
+                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+                  : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              }`}
+              title={errorSyncBd || "Los parámetros económicos se guardan en PostgreSQL"}
+            >
+              <Database className="w-3 h-3" />
+              {errorSyncBd
+                ? "Solo local (sin conexión BD)"
+                : sincronizandoBd
+                ? "Guardando en BD..."
+                : "Sincronizado en BD"}
+            </span>
           </h2>
           <p className="text-xs text-slate-400">
-            Cruce financiero por lote y cultivo sobre {totales.hectareas.toLocaleString("es-AR", { maximumFractionDigits: 1 })} ha monitoreadas (supuestos zonales editables)
+            Cruce financiero por lote y cultivo sobre {totales.hectareas.toLocaleString("es-AR", { maximumFractionDigits: 1 })} ha monitoreadas (supuestos compartidos editables)
           </p>
         </div>
 
@@ -366,7 +248,7 @@ export default function ModuloEconomico({
           <div className="inline-flex rounded-lg border border-slate-700 bg-slate-950 p-0.5 text-xs">
             <button
               type="button"
-              onClick={() => setEsCampoAlquilado(false)}
+              onClick={() => onChangeEsCampoAlquilado(false)}
               className={`rounded-md px-2.5 py-1 font-medium transition ${
                 !esCampoAlquilado
                   ? "bg-emerald-500 text-slate-950 font-semibold"
@@ -377,7 +259,7 @@ export default function ModuloEconomico({
             </button>
             <button
               type="button"
-              onClick={() => setEsCampoAlquilado(true)}
+              onClick={() => onChangeEsCampoAlquilado(true)}
               className={`rounded-md px-2.5 py-1 font-medium transition ${
                 esCampoAlquilado
                   ? "bg-amber-400 text-slate-950 font-semibold"
@@ -389,17 +271,22 @@ export default function ModuloEconomico({
           </div>
 
           {esCampoAlquilado && (
-            <label className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200">
+            <label className="flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200 whitespace-nowrap">
               <span>Arriendo:</span>
               <input
                 type="number"
                 min={0}
                 max={40}
                 value={arriendoQqSoja}
-                onChange={(e) => setArriendoQqSoja(Math.max(0, Number(e.target.value) || 0))}
+                onChange={(e) =>
+                  onChangeArriendoQqSoja(Math.max(0, Number(e.target.value) || 0))
+                }
                 className="w-12 rounded border border-amber-500/40 bg-slate-950 px-1.5 py-0.5 text-xs text-slate-100 focus:outline-none"
               />
               <span>qq soja/ha</span>
+              <span className="text-[11px] text-amber-300/80">
+                (USD {Math.round(arriendoUsdHa).toLocaleString("es-AR")}/ha)
+              </span>
             </label>
           )}
 
@@ -516,7 +403,7 @@ export default function ModuloEconomico({
               <button
                 key={idEsc}
                 type="button"
-                onClick={() => setEscenario(idEsc)}
+                onClick={() => onChangeEscenario(idEsc)}
                 className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition whitespace-nowrap shrink-0 ${
                   activo
                     ? idEsc === "base" || idEsc === "optimista_10"
@@ -550,7 +437,7 @@ export default function ModuloEconomico({
           <p className="text-[11px] text-slate-400">
             Prom.{" "}
             <strong className="text-slate-200">
-              {Math.round(totales.margenPromedioHa)} USD/ha
+              USD {Math.round(totales.margenPromedioHa).toLocaleString("es-AR")}/ha
             </strong>{" "}
             · Relación Margen / Costo:{" "}
             <strong className="text-emerald-300">{totales.roiPct}%</strong>
@@ -576,7 +463,7 @@ export default function ModuloEconomico({
             >
               {totales.capitalEnAlertaUsd > 0
                 ? `${formatUsd(totales.capitalEnAlertaUsd)} en alerta`
-                : "0 USD en alerta"}
+                : "USD 0 en alerta"}
             </span>
           </div>
           <p className="text-[11px] text-slate-400">
@@ -631,6 +518,12 @@ export default function ModuloEconomico({
                 <XAxis dataKey="nombreCorto" stroke="#94a3b8" fontSize={11} />
                 <YAxis stroke="#94a3b8" fontSize={11} width={45} />
                 <Tooltip
+                  formatter={(value) => {
+                    const num = typeof value === "number" ? value : Number(value);
+                    return Number.isFinite(num)
+                      ? `USD ${Math.round(num).toLocaleString("es-AR")}/ha`
+                      : String(value ?? "");
+                  }}
                   contentStyle={{
                     backgroundColor: "#0f172a",
                     borderColor: "#334155",
@@ -680,6 +573,12 @@ export default function ModuloEconomico({
                 <XAxis dataKey="nombreCorto" stroke="#94a3b8" fontSize={11} />
                 <YAxis stroke="#94a3b8" fontSize={11} width={40} />
                 <Tooltip
+                  formatter={(value) => {
+                    const num = typeof value === "number" ? value : Number(value);
+                    return Number.isFinite(num)
+                      ? `${num.toFixed(1)} qq/ha`
+                      : String(value ?? "");
+                  }}
                   contentStyle={{
                     backgroundColor: "#0f172a",
                     borderColor: "#334155",
@@ -732,79 +631,199 @@ export default function ModuloEconomico({
           <tbody className="divide-y divide-slate-800/70">
             {filasCalculadas.map((row) => {
               const seleccionado = row.id === loteSeleccionadoId;
+              const editando = editandoLoteId === row.id;
               return (
-                <tr
-                  key={row.id}
-                  onClick={() => onSelectLote(row.id)}
-                  className={`cursor-pointer transition ${
-                    seleccionado
-                      ? "bg-emerald-500/10"
-                      : "bg-slate-900/30 hover:bg-slate-800/50"
-                  }`}
-                >
-                  <td className="py-2.5 px-3">
-                    <div className="font-medium text-slate-100 whitespace-nowrap">
-                      {row.nombreLote}
-                    </div>
-                    <div className="text-[11px] text-slate-400 whitespace-nowrap">
-                      {row.cliente}
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-3 whitespace-nowrap">
-                    <span className="text-emerald-300 font-medium">{row.cultivo}</span>
-                    <span className="text-slate-400 block text-[11px]">
-                      {row.hectareas.toLocaleString("es-AR", {
-                        maximumFractionDigits: 1,
-                      })}{" "}
-                      ha
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono text-slate-300 whitespace-nowrap">
-                    ${Math.round(row.costoUsdHa)}/ha
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap">
-                    <span className="text-amber-300 font-semibold">
-                      {row.rindeIndiferenciaQqHa.toFixed(1)} qq/ha
-                    </span>
-                    <span className="block text-[10px] text-slate-400">
-                      Holgura: {row.holguraQqHa >= 0 ? "+" : ""}
-                      {row.holguraQqHa.toFixed(1)} qq
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono text-slate-200 whitespace-nowrap">
-                    {row.rindeObjetivoQqHa} qq/ha
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap">
-                    <span
-                      className={`font-semibold ${
-                        row.margenBrutoTotalUsd >= 0
-                          ? "text-emerald-400"
-                          : "text-red-400"
-                      }`}
-                    >
-                      {formatUsd(row.margenBrutoTotalUsd)}
-                    </span>
-                    <span className="block text-[10px] text-slate-400">
-                      ${Math.round(row.margenBrutoHa)}/ha
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                    {row.severidadMaxima ? (
-                      <div>
-                        <span className="inline-block rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
-                          {row.severidadMaxima} · -{Math.round(row.factorRiesgo * 100)}%
+                <Fragment key={row.id}>
+                  <tr
+                    onClick={() => onSelectLote(row.id)}
+                    className={`cursor-pointer transition ${
+                      seleccionado
+                        ? "bg-emerald-500/10"
+                        : "bg-slate-900/30 hover:bg-slate-800/50"
+                    }`}
+                  >
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-slate-100 whitespace-nowrap">
+                          {row.nombreLote}
                         </span>
-                        <span className="block text-[10px] text-red-300 font-mono mt-0.5">
-                          ~{formatUsd(row.ingresoEnRiesgoUsd)}
-                        </span>
+                        {onVerEnMapa && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onVerEnMapa(row.id);
+                            }}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition ${
+                              seleccionado
+                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                : "bg-slate-800 text-slate-300 border border-slate-700 hover:border-emerald-500/40 hover:text-emerald-300"
+                            }`}
+                          >
+                            Ver mapa ↑
+                          </button>
+                        )}
+                        {onSavePresupuestoLote && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              abrirAjusteLote(row);
+                            }}
+                            className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300 hover:border-amber-500/50 hover:text-amber-300 transition"
+                            title="Ajustar rinde objetivo o costo extra de este lote"
+                          >
+                            <Sliders className="w-2.5 h-2.5" />
+                            <span>{editando ? "Cerrar" : "Ajustar"}</span>
+                          </button>
+                        )}
                       </div>
-                    ) : (
-                      <span className="inline-block rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
-                        Estable
+                      <div className="text-[11px] text-slate-400 whitespace-nowrap">
+                        {row.cliente}
+                        {row.notasPresupuesto ? ` · ${row.notasPresupuesto}` : ""}
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      <span className="text-emerald-300 font-medium">{row.cultivo}</span>
+                      <span className="text-slate-400 block text-[11px]">
+                        {row.hectareas.toLocaleString("es-AR", {
+                          maximumFractionDigits: 1,
+                        })}{" "}
+                        ha
                       </span>
-                    )}
-                  </td>
-                </tr>
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono text-slate-300 whitespace-nowrap">
+                      <span>USD {Math.round(row.costoUsdHa).toLocaleString("es-AR")}/ha</span>
+                      {(row.costoExtraManualHa > 0 || row.costoLaboresHa > 0) && (
+                        <span className="block text-[10px] text-amber-300">
+                          Incl. +USD{" "}
+                          {Math.round(
+                            row.costoExtraManualHa + row.costoLaboresHa
+                          ).toLocaleString("es-AR")}
+                          /ha extra/lab.
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap">
+                      <span className="text-amber-300 font-semibold">
+                        {row.rindeIndiferenciaQqHa.toFixed(1)} qq/ha
+                      </span>
+                      <span className="block text-[10px] text-slate-400">
+                        Holgura: {row.holguraQqHa >= 0 ? "+" : ""}
+                        {row.holguraQqHa.toFixed(1)} qq
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono text-slate-200 whitespace-nowrap">
+                      <span>{row.rindeObjetivoQqHa} qq/ha</span>
+                      {row.usaRindeIndividual && (
+                        <span className="block text-[10px] text-sky-300">
+                          Rinde propio del lote
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap">
+                      <span
+                        className={`font-semibold ${
+                          row.margenBrutoTotalUsd >= 0
+                            ? "text-emerald-400"
+                            : "text-red-400"
+                        }`}
+                      >
+                        {formatUsd(row.margenBrutoTotalUsd)}
+                      </span>
+                      <span className="block text-[10px] text-slate-400">
+                        USD {Math.round(row.margenBrutoHa).toLocaleString("es-AR")}/ha
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                      {row.severidadMaxima ? (
+                        <div>
+                          <span className="inline-block rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                            {row.severidadMaxima} · -{Math.round(row.factorRiesgo * 100)}%
+                          </span>
+                          <span className="block text-[10px] text-red-300 font-mono mt-0.5">
+                            ~{formatUsd(row.ingresoEnRiesgoUsd)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="inline-block rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                          Estable
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  {editando && onSavePresupuestoLote && (
+                    <tr className="bg-slate-950/90 border-t border-slate-800">
+                      <td colSpan={7} className="p-3">
+                        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 flex-1">
+                            <label className="block">
+                              <span className="text-[11px] text-slate-300 block mb-1">
+                                Rinde esperado propio (qq/ha)
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.5"
+                                placeholder="Vacío = usa estándar del cultivo"
+                                value={rindeLoteInput}
+                                onChange={(e) => setRindeLoteInput(e.target.value)}
+                                className="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-[11px] text-slate-300 block mb-1">
+                                Costo extra ejecutado (USD/ha)
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                step="1"
+                                value={costoExtraInput}
+                                onChange={(e) => setCostoExtraInput(e.target.value)}
+                                className="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
+                              />
+                              {row.costoLaboresHa > 0 && (
+                                <span className="text-[10px] text-amber-300 block mt-0.5">
+                                  Se suman +USD {row.costoLaboresHa}/ha de recorridas registradas
+                                </span>
+                              )}
+                            </label>
+                            <label className="block">
+                              <span className="text-[11px] text-slate-300 block mb-1">
+                                Nota agronómica / financiera
+                              </span>
+                              <input
+                                type="text"
+                                placeholder="Ej: Lote con tosca / refertilización"
+                                value={notasLoteInput}
+                                onChange={(e) => setNotasLoteInput(e.target.value)}
+                                className="w-full rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-100 placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+                              />
+                            </label>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setEditandoLoteId(null)}
+                              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              disabled={guardandoLote}
+                              onClick={() => handleGuardarLote(row.id)}
+                              className="rounded-lg bg-emerald-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-50"
+                            >
+                              {guardandoLote ? "Guardando..." : "Guardar lote"}
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
@@ -822,7 +841,11 @@ export default function ModuloEconomico({
               </td>
               <td className="py-2.5 px-3 text-right text-slate-400">—</td>
               <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-              <td className="py-2.5 px-3 text-right font-mono text-emerald-400 whitespace-nowrap">
+              <td
+                className={`py-2.5 px-3 text-right font-mono whitespace-nowrap ${
+                  totales.margenUsd >= 0 ? "text-emerald-400" : "text-red-400"
+                }`}
+              >
                 {formatUsd(totales.margenUsd)}
               </td>
               <td className="py-2.5 px-3 text-right font-mono text-amber-300 whitespace-nowrap">

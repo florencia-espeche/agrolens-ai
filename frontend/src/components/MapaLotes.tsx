@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -11,7 +11,18 @@ export interface AlertaMapa {
   lote_id: number;
   estado: string;
   nivel_severidad?: string;
-  [key: string]: any;
+}
+
+function formatearFechaTooltip(fechaIso?: string) {
+  if (!fechaIso) return "";
+  const soloFecha = String(fechaIso).split("T")[0];
+  const d = new Date(`${soloFecha}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return soloFecha;
+  return d.toLocaleDateString("es-AR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 interface MapaLotesProps {
@@ -28,7 +39,8 @@ const getLoteStyle = (
   alertas: AlertaMapa[],
   isSelected: boolean
 ) => {
-  const alertasLote = alertas.filter((a) => a.lote_id === loteId);
+  const idNum = Number(loteId);
+  const alertasLote = alertas.filter((a) => Number(a.lote_id) === idNum);
 
   const tienePendiente = alertasLote.some(
     (a) =>
@@ -129,10 +141,31 @@ export default function MapaLotes({
   const [tipoCapa, setTipoCapa] = useState<"satelital" | "oscuro">("satelital");
   const [vistaGeneralTrigger, setVistaGeneralTrigger] = useState(0);
   const [centrarLoteTrigger, setCentrarLoteTrigger] = useState(0);
+  const geoJsonRef = useRef<L.GeoJSON | null>(null);
 
-  // Key dinámica para forzar repintado en React-Leaflet al cambiar estado de alertas o selección
+  // Actualiza estilos en el lugar sin desmontar/remountar los polígonos al elegir un lote
+  useEffect(() => {
+    const layerGroup = geoJsonRef.current;
+    if (!layerGroup) return;
+    layerGroup.eachLayer((subLayer) => {
+      const featureLayer = subLayer as L.Path & { feature?: Feature };
+      const id = featureLayer.feature?.properties?.id;
+      if (id !== undefined && featureLayer.setStyle) {
+        const isSelected = Number(id) === loteSeleccionadoId;
+        featureLayer.setStyle(getLoteStyle(Number(id), alertas, isSelected));
+        if (isSelected && featureLayer.bringToFront) {
+          featureLayer.bringToFront();
+        }
+      }
+    });
+  }, [loteSeleccionadoId, alertas, geojson]);
+
+  // Solo reconstruye la capa GeoJSON si cambian los lotes o el estado de las alertas
   const alertasKey = alertas.map((a) => `${a.id}:${a.estado}`).join(",");
-  const mapKey = `${JSON.stringify(geojson)}-${alertasKey}-${loteSeleccionadoId}`;
+  const geojsonIdsKey = (geojson?.features || [])
+    .map((f) => `${f.properties?.id}:${f.properties?.ultimo_ndvi ?? ""}`)
+    .join(",");
+  const mapKey = `${geojsonIdsKey}-${alertasKey}`;
 
   return (
     <div className="relative h-full w-full">
@@ -224,11 +257,12 @@ export default function MapaLotes({
 
         {geojson && (
           <GeoJSON
+            ref={geoJsonRef}
             key={mapKey}
             data={geojson}
             style={(feature?: Feature) => {
               const props = feature?.properties || {};
-              const isSelected = props.id === loteSeleccionadoId;
+              const isSelected = Number(props.id) === loteSeleccionadoId;
               return getLoteStyle(props.id, alertas, isSelected);
             }}
             onEachFeature={(feature, layer) => {
@@ -251,8 +285,9 @@ export default function MapaLotes({
                 ? "🟡 En seguimiento"
                 : "🟢 Saludable";
 
-              const fechaFoto = p.ultima_fecha_satelital
-                ? `<br/>📅 Imagen: ${p.ultima_fecha_satelital}`
+              const fechaFormateada = formatearFechaTooltip(p.ultima_fecha_satelital);
+              const fechaFoto = fechaFormateada
+                ? `<br/>📅 Imagen: ${fechaFormateada}`
                 : "";
 
               layer.bindTooltip(
