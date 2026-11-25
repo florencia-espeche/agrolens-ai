@@ -143,6 +143,91 @@ def obtener_series_lote(lote_id: int, dias: int = Query(90, ge=7, le=365)):
         cur.close()
         conn.close()
 
+@app.get("/api/lotes/{lote_id}/pronostico")
+def obtener_pronostico_lote(lote_id: int, dias: int = Query(7, ge=1, le=14)):
+    """
+    Obtiene el pronóstico agroclimático a 7 días desde Open-Meteo (sin API key)
+    usando el centroide geográfico del lote en PostGIS.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT
+                id,
+                nombre_lote,
+                ST_Y(ST_Centroid(geom)) AS lat,
+                ST_X(ST_Centroid(geom)) AS lon
+            FROM lotes
+            WHERE id = %s;
+        """, (lote_id,))
+        lote = cur.fetchone()
+        if not lote:
+            raise HTTPException(status_code=404, detail="Lote no encontrado")
+    finally:
+        cur.close()
+        conn.close()
+
+    lat = float(lote["lat"])
+    lon = float(lote["lon"])
+
+    try:
+        res = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "daily": (
+                    "weather_code,temperature_2m_max,temperature_2m_min,"
+                    "precipitation_sum,precipitation_probability_max,et0_fao_evapotranspiration"
+                ),
+                "timezone": "auto",
+                "forecast_days": dias,
+            },
+            timeout=10,
+        )
+        res.raise_for_status()
+        data = res.json()
+        daily = data.get("daily", {})
+        fechas = daily.get("time", [])
+
+        codigos = daily.get("weather_code") or []
+        t_max = daily.get("temperature_2m_max") or []
+        t_min = daily.get("temperature_2m_min") or []
+        lluvias = daily.get("precipitation_sum") or []
+        probs = daily.get("precipitation_probability_max") or []
+        et0s = daily.get("et0_fao_evapotranspiration") or []
+
+        pronostico = []
+        for i, fecha in enumerate(fechas):
+            lluvia_val = float(lluvias[i]) if i < len(lluvias) and lluvias[i] is not None else 0.0
+            pronostico.append({
+                "fecha": fecha,
+                "weather_code": codigos[i] if i < len(codigos) else None,
+                "temp_max_c": t_max[i] if i < len(t_max) else None,
+                "temp_min_c": t_min[i] if i < len(t_min) else None,
+                "precipitacion_mm": round(lluvia_val, 1),
+                "probabilidad_lluvia_pct": probs[i] if i < len(probs) else None,
+                "evapotranspiracion_mm": et0s[i] if i < len(et0s) else None,
+            })
+
+        lluvia_acumulada = round(sum(d["precipitacion_mm"] for d in pronostico), 1)
+        return {
+            "lote_id": lote["id"],
+            "nombre_lote": lote["nombre_lote"],
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "lluvia_acumulada_mm": lluvia_acumulada,
+            "dias": pronostico,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo obtener el pronóstico desde Open-Meteo: {str(e)}",
+        )
+
 @app.get("/api/alertas")
 def obtener_alertas(estado: str | None = Query(None, description="Filtrar por PENDIENTE, EN_REVISION o RESUELTA")):
     """Devuelve el feed de alertas generadas por IA para el panel de triage."""

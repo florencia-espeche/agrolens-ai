@@ -6,6 +6,7 @@ import type { FeatureCollection } from "geojson";
 import { AlertTriangle, CheckCircle2, Sprout, MapPin, Send } from "lucide-react";
 import GraficosLote, { type SeriesLote } from "@/components/GraficosLote";
 import ChatLote from "@/components/ChatLote";
+import PronosticoLote, { type PronosticoLoteData } from "@/components/PronosticoLote";
 
 // Leaflet requiere `window`, por eso se importa sin SSR
 const MapaLotes = dynamic(() => import("@/components/MapaLotes"), {
@@ -61,6 +62,8 @@ export default function Home() {
   const [isSlowLoad, setIsSlowLoad] = useState(false);
   const [seriesLote, setSeriesLote] = useState<SeriesLote | null>(null);
   const [cargandoSeries, setCargandoSeries] = useState(false);
+  const [pronosticoLote, setPronosticoLote] = useState<PronosticoLoteData | null>(null);
+  const [cargandoPronostico, setCargandoPronostico] = useState(false);
 
   // Estados para la suscripción al Bot de Telegram
   const [chatId, setChatId] = useState("");
@@ -182,19 +185,34 @@ export default function Home() {
 
   useEffect(() => {
     if (!loteSeleccionado) return;
-    const cargarSeries = async () => {
+    const cargarSeriesYPronostico = async () => {
       setCargandoSeries(true);
+      setCargandoPronostico(true);
       try {
-        const res = await fetch(`${API_URL}/api/lotes/${loteSeleccionado}/series?dias=90`);
-        const data = await res.json();
-        setSeriesLote(data);
+        const [resSeries, resPronostico] = await Promise.allSettled([
+          fetch(`${API_URL}/api/lotes/${loteSeleccionado}/series?dias=90`),
+          fetch(`${API_URL}/api/lotes/${loteSeleccionado}/pronostico?dias=7`),
+        ]);
+
+        if (resSeries.status === "fulfilled" && resSeries.value.ok) {
+          const data = await resSeries.value.json();
+          setSeriesLote(data);
+        }
+
+        if (resPronostico.status === "fulfilled" && resPronostico.value.ok) {
+          const dataPronostico = await resPronostico.value.json();
+          setPronosticoLote(dataPronostico);
+        } else {
+          setPronosticoLote(null);
+        }
       } catch (err) {
-        console.error("Error cargando series del lote:", err);
+        console.error("Error cargando datos del lote:", err);
       } finally {
         setCargandoSeries(false);
+        setCargandoPronostico(false);
       }
     };
-    cargarSeries();
+    cargarSeriesYPronostico();
   }, [loteSeleccionado]);
 
   const actualizarEstadoAlerta = async (alertaId: number, nuevoEstado: string) => {
@@ -558,6 +576,11 @@ export default function Home() {
             </div>
           </div>
           <GraficosLote series={seriesLote} cargando={cargandoSeries} />
+
+          {/* Pronóstico climático a 7 días (Open-Meteo) */}
+          {loteSeleccionado && (
+            <PronosticoLote pronostico={pronosticoLote} cargando={cargandoPronostico} />
+          )}
 
           {/* Asistente IA sobre el lote seleccionado */}
           {loteSeleccionado && seriesLote && (
