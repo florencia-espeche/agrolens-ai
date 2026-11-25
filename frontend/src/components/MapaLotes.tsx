@@ -151,7 +151,8 @@ export default function MapaLotes({
 
               layer.bindTooltip(
                 `<strong>${p.nombre_lote}</strong><br/>
-                 Cultivo: ${p.cultivo_actual}<br/>
+                 ${p.cliente ? `Establecimiento: ${p.cliente}<br/>` : ""}
+                 Cultivo: ${p.cultivo_actual}${p.hectareas != null ? ` (${p.hectareas} ha)` : ""}<br/>
                  NDVI: ${p.ultimo_ndvi ?? "N/A"}${fechaFoto}<br/>
                  Semáforo: ${estadoSemaforo}`,
                 { sticky: true }

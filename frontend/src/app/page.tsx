@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, Sprout, MapPin, Send } from "lucide-react"
 import GraficosLote, { type SeriesLote } from "@/components/GraficosLote";
 import ChatLote from "@/components/ChatLote";
 import PronosticoLote, { type PronosticoLoteData } from "@/components/PronosticoLote";
+import KpisGerenciales from "@/components/KpisGerenciales";
 
 // Leaflet requiere `window`, por eso se importa sin SSR
 const MapaLotes = dynamic(() => import("@/components/MapaLotes"), {
@@ -23,6 +24,7 @@ interface Alerta {
   lote_id: number;
   nombre_lote: string;
   cultivo_actual: string;
+  cliente?: string;
   zona_productiva: string;
   fecha_deteccion: string;
   nivel_severidad: string;
@@ -57,6 +59,8 @@ export default function Home() {
   const [geojson, setGeojson] = useState<FeatureCollection | null>(null);
   const [alertas, setAlertas] = useState<Alerta[]>([]);
   const [filtroEstado, setFiltroEstado] = useState<string>("todas");
+  const [filtroCliente, setFiltroCliente] = useState<string>("todos");
+  const [filtroCampana, setFiltroCampana] = useState<string>("todas");
   const [loteSeleccionado, setLoteSeleccionado] = useState<number | null>(null);
   const [cargando, setCargando] = useState(true);
   const [isSlowLoad, setIsSlowLoad] = useState(false);
@@ -72,10 +76,57 @@ export default function Home() {
 
   const normalizarEstado = (estado?: string) => (estado || "pendiente").toLowerCase().trim();
 
+  const clientesDisponibles = useMemo(() => {
+    const set = new Set<string>();
+    (geojson?.features || []).forEach((f) => {
+      if (f.properties?.cliente) set.add(String(f.properties.cliente));
+    });
+    return Array.from(set).sort();
+  }, [geojson]);
+
+  const campanasDisponibles = useMemo(() => {
+    const set = new Set<string>();
+    (geojson?.features || []).forEach((f) => {
+      if (f.properties?.campana) set.add(String(f.properties.campana));
+    });
+    return Array.from(set).sort().reverse();
+  }, [geojson]);
+
+  const geojsonFiltrado = useMemo<FeatureCollection | null>(() => {
+    if (!geojson) return null;
+    const features = geojson.features.filter((f) => {
+      const matchCliente =
+        filtroCliente === "todos" || f.properties?.cliente === filtroCliente;
+      const matchCampana =
+        filtroCampana === "todas" || f.properties?.campana === filtroCampana;
+      return matchCliente && matchCampana;
+    });
+    return { ...geojson, features };
+  }, [geojson, filtroCliente, filtroCampana]);
+
+  const alertasContexto = useMemo(() => {
+    if (!geojsonFiltrado) return alertas;
+    if (filtroCliente === "todos" && filtroCampana === "todas") return alertas;
+    const idsVisibles = new Set(
+      geojsonFiltrado.features.map((f) => Number(f.properties?.id))
+    );
+    return alertas.filter((a) => idsVisibles.has(a.lote_id));
+  }, [alertas, geojsonFiltrado, filtroCliente, filtroCampana]);
+
   const alertasFiltradas = useMemo(() => {
-    if (filtroEstado === "todas") return alertas;
-    return alertas.filter((a) => normalizarEstado(a.estado) === filtroEstado);
-  }, [alertas, filtroEstado]);
+    if (filtroEstado === "todas") return alertasContexto;
+    return alertasContexto.filter((a) => normalizarEstado(a.estado) === filtroEstado);
+  }, [alertasContexto, filtroEstado]);
+
+  // Lote activo derivado según filtros visibles (evita setState en useEffect)
+  const loteActivoId = useMemo(() => {
+    const features = geojsonFiltrado?.features || [];
+    if (features.length === 0) return null;
+    const sigueVisible = features.some(
+      (f) => Number(f.properties?.id) === loteSeleccionado
+    );
+    return sigueVisible ? loteSeleccionado : Number(features[0].properties?.id);
+  }, [geojsonFiltrado, loteSeleccionado]);
 
   // Combina series satelitales y climáticas para el contexto del Asistente IA
   const datosCombinadosLote = useMemo(() => {
@@ -118,12 +169,12 @@ export default function Home() {
 
   const contadores = useMemo(() => {
     return {
-      todas: alertas.length,
-      pendiente: alertas.filter((a) => normalizarEstado(a.estado) === "pendiente").length,
-      en_revision: alertas.filter((a) => normalizarEstado(a.estado) === "en_revision").length,
-      resuelta: alertas.filter((a) => normalizarEstado(a.estado) === "resuelta").length,
+      todas: alertasContexto.length,
+      pendiente: alertasContexto.filter((a) => normalizarEstado(a.estado) === "pendiente").length,
+      en_revision: alertasContexto.filter((a) => normalizarEstado(a.estado) === "en_revision").length,
+      resuelta: alertasContexto.filter((a) => normalizarEstado(a.estado) === "resuelta").length,
     };
-  }, [alertas]);
+  }, [alertasContexto]);
 
   useEffect(() => {
     if (!cargando) {
@@ -184,14 +235,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!loteSeleccionado) return;
+    if (!loteActivoId) return;
     const cargarSeriesYPronostico = async () => {
       setCargandoSeries(true);
       setCargandoPronostico(true);
       try {
         const [resSeries, resPronostico] = await Promise.allSettled([
-          fetch(`${API_URL}/api/lotes/${loteSeleccionado}/series?dias=90`),
-          fetch(`${API_URL}/api/lotes/${loteSeleccionado}/pronostico?dias=7`),
+          fetch(`${API_URL}/api/lotes/${loteActivoId}/series?dias=90`),
+          fetch(`${API_URL}/api/lotes/${loteActivoId}/pronostico?dias=7`),
         ]);
 
         if (resSeries.status === "fulfilled" && resSeries.value.ok) {
@@ -213,7 +264,7 @@ export default function Home() {
       }
     };
     cargarSeriesYPronostico();
-  }, [loteSeleccionado]);
+  }, [loteActivoId]);
 
   const actualizarEstadoAlerta = async (alertaId: number, nuevoEstado: string) => {
     await fetch(`${API_URL}/api/alertas/${alertaId}`, {
@@ -275,7 +326,7 @@ export default function Home() {
           </div>
 
           <div className="text-xs sm:text-sm text-slate-400 hidden md:block border-l border-slate-800 pl-3">
-            {geojson ? `${geojson.features.length} lotes monitoreados` : "Conectando..."}
+            {geojsonFiltrado ? `${geojsonFiltrado.features.length} lotes monitoreados` : "Conectando..."}
           </div>
         </div>
       </header>
@@ -295,6 +346,19 @@ export default function Home() {
 
       {cargando ? (
         <div className="space-y-4 sm:space-y-6">
+          {/* Skeleton de Barra Gerencial y KPIs */}
+          <div className="space-y-3">
+            <div className="h-12 rounded-xl border border-slate-800 bg-slate-900/50 animate-pulse" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className="h-28 rounded-xl border border-slate-800 bg-slate-900/60 p-4 animate-pulse"
+                />
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-4 lg:gap-6 lg:grid-cols-3">
             {/* Skeleton del Mapa */}
             <div className="relative min-w-0 h-[320px] sm:h-[400px] lg:col-span-2 lg:h-[580px] xl:h-[640px] overflow-hidden rounded-xl border border-slate-800 bg-slate-900 p-3 sm:p-4 flex flex-col justify-between">
@@ -342,6 +406,21 @@ export default function Home() {
         </div>
       ) : (
         <>
+          {/* KPIs Gerenciales + Filtro por Establecimiento y Campaña */}
+          <KpisGerenciales
+            geojsonFiltrado={geojsonFiltrado}
+            alertasVisibles={alertasContexto}
+            clientes={clientesDisponibles}
+            campanas={campanasDisponibles}
+            filtroCliente={filtroCliente}
+            filtroCampana={filtroCampana}
+            onChangeCliente={setFiltroCliente}
+            onChangeCampana={setFiltroCampana}
+            loteSeleccionadoId={loteActivoId}
+            pronosticoLote={pronosticoLote}
+            cargandoPronostico={cargandoPronostico}
+          />
+
           {/* Grid Principal: Mapa + Panel de Alertas */}
           <div className="grid grid-cols-1 gap-4 lg:gap-6 lg:grid-cols-3">
             {/* Mapa (2 columnas) con altura progresiva */}
@@ -352,14 +431,20 @@ export default function Home() {
                   Mapa de Lotes — Córdoba
                 </h2>
                 <span className="text-xs text-slate-400">
-                  {geojson?.features ? `${geojson.features.length} parcelas georreferenciadas` : ""}
+                  {geojsonFiltrado?.features
+                    ? `${geojsonFiltrado.features.length} ${
+                        geojsonFiltrado.features.length === 1
+                          ? "parcela georreferenciada"
+                          : "parcelas georreferenciadas"
+                      }`
+                    : ""}
                 </span>
               </div>
               <div className="flex-1 min-h-0 relative rounded-lg overflow-hidden">
                 <MapaLotes
-                  geojson={geojson}
-                  alertas={alertas}
-                  loteSeleccionadoId={loteSeleccionado}
+                  geojson={geojsonFiltrado}
+                  alertas={alertasContexto}
+                  loteSeleccionadoId={loteActivoId}
                   onSelectLote={setLoteSeleccionado}
                 />
               </div>
@@ -374,7 +459,7 @@ export default function Home() {
                   Alertas Agronómicas IA
                 </h2>
                 <span className="text-xs text-slate-400">
-                  {alertasFiltradas.length} de {alertas.length}
+                  {alertasFiltradas.length} de {alertasContexto.length}
                 </span>
               </div>
 
@@ -425,7 +510,7 @@ export default function Home() {
                         key={alerta.id}
                         onClick={() => setLoteSeleccionado(alerta.lote_id)}
                         className={`p-3 rounded-lg border cursor-pointer transition ${
-                          loteSeleccionado === alerta.lote_id
+                          loteActivoId === alerta.lote_id
                             ? "bg-slate-800 border-emerald-500/60"
                             : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
                         }`}
@@ -443,6 +528,11 @@ export default function Home() {
                           </span>
                         </div>
 
+                        {alerta.cliente && (
+                          <p className="text-[11px] text-slate-400 mb-0.5 truncate">
+                            {alerta.cliente}
+                          </p>
+                        )}
                         <p className="text-xs text-emerald-400 mb-2">
                           {alerta.cultivo_actual} · {alerta.tipo_anomalia}
                         </p>
@@ -578,15 +668,15 @@ export default function Home() {
           <GraficosLote series={seriesLote} cargando={cargandoSeries} />
 
           {/* Pronóstico climático a 7 días (Open-Meteo) */}
-          {loteSeleccionado && (
+          {loteActivoId && (
             <PronosticoLote pronostico={pronosticoLote} cargando={cargandoPronostico} />
           )}
 
           {/* Asistente IA sobre el lote seleccionado */}
-          {loteSeleccionado && seriesLote && (
+          {loteActivoId && seriesLote && (
             <div className="mt-6">
               <ChatLote
-                loteId={loteSeleccionado}
+                loteId={loteActivoId}
                 loteNombre={seriesLote.lote.nombre_lote}
                 datosLote={datosCombinadosLote}
               />
